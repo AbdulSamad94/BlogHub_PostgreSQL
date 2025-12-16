@@ -29,7 +29,15 @@ jest.mock("next/server", () => ({
     },
 }));
 
-// Mock all other dependencies BEFORE any imports
+// Mock UserService
+jest.mock("@/lib/services/userService", () => ({
+    UserService: {
+        getUserProfile: jest.fn(),
+        updateUserProfile: jest.fn(),
+    },
+}));
+
+// Mock next-auth
 jest.mock("next-auth", () => ({
     getServerSession: jest.fn(),
 }));
@@ -38,51 +46,21 @@ jest.mock("@/lib/auth/auth", () => ({
     authOptions: {},
 }));
 
+// Mock db (still needed for imports theoretically, but unused logic)
 jest.mock("@/lib/db", () => ({
-    db: {
-        query: {
-            users: {
-                findFirst: jest.fn(),
-            },
-            posts: {
-                findMany: jest.fn(),
-            },
-            follows: {
-                findFirst: jest.fn(),
-            },
-        },
-        update: jest.fn(),
-    },
+    db: {},
 }));
 
 jest.mock("@/lib/db/schema/schema", () => ({
-    users: {
-        id: "id",
-        name: "name",
-        email: "email",
-        image: "image",
-        bio: "bio",
-        followerCount: "follower_count",
-        followingCount: "following_count",
-        createdAt: "created_at",
-    },
-    posts: {
-        id: "id",
-        authorId: "author_id",
-        status: "status",
-        createdAt: "created_at",
-    },
-    follows: {
-        followerId: "follower_id",
-        followingId: "following_id",
-    },
+    users: {},
+    posts: {},
+    follows: {},
 }));
 
-// NOW import after all mocks are set up
 import { GET, PUT } from "@/app/api/users/[id]/route";
 import { getServerSession } from "next-auth";
-import { db } from "@/lib/db";
 import { NextRequest } from "next/server";
+import { UserService } from "@/lib/services/userService";
 
 const mockGetServerSession = getServerSession as jest.MockedFunction<
     typeof getServerSession
@@ -97,7 +75,7 @@ describe("GET /api/users/[id]", () => {
     });
 
     it("should return user profile with posts for authenticated user", async () => {
-        const mockUser = {
+        const mockUserProfile = {
             id: mockUserId,
             name: "John Doe",
             email: "john@example.com",
@@ -106,36 +84,23 @@ describe("GET /api/users/[id]", () => {
             followerCount: 10,
             followingCount: 5,
             createdAt: new Date("2024-01-01"),
-        };
-
-        const mockPosts = [
-            {
-                id: "post-1",
-                title: "Test Post",
-                slug: "test-post",
-                content: "Test content",
-                excerpt: "Test excerpt",
-                coverImage: null,
-                status: "published",
-                authorId: mockUserId,
-                createdAt: new Date("2024-01-15"),
-                author: {
-                    id: mockUserId,
-                    name: "John Doe",
-                    email: "john@example.com",
-                    image: "https://example.com/avatar.jpg",
+            isFollowing: false,
+            isOwnProfile: false,
+            posts: [
+                {
+                    id: "post-1",
+                    title: "Test Post",
+                    status: "published",
+                    createdAt: new Date("2024-01-15"),
                 },
-                postCategories: [],
-            },
-        ];
+            ],
+        };
 
         mockGetServerSession.mockResolvedValue({
             user: { id: mockCurrentUserId },
         } as any);
 
-        (db.query.users.findFirst as jest.Mock).mockResolvedValue(mockUser);
-        (db.query.follows.findFirst as jest.Mock).mockResolvedValue(null);
-        (db.query.posts.findMany as jest.Mock).mockResolvedValue(mockPosts);
+        (UserService.getUserProfile as jest.Mock).mockResolvedValue(mockUserProfile);
 
         const req = new NextRequest("http://localhost:3000/api/users/user-123");
         const params = Promise.resolve({ id: mockUserId });
@@ -146,61 +111,7 @@ describe("GET /api/users/[id]", () => {
         expect(response.status).toBe(200);
         expect(data.success).toBe(true);
         expect(data.user.id).toBe(mockUserId);
-        expect(data.user.isFollowing).toBe(false);
-        expect(data.user.isOwnProfile).toBe(false);
         expect(data.user.posts).toHaveLength(1);
-    });
-
-    it("should return own profile with draft posts", async () => {
-        const mockUser = {
-            id: mockUserId,
-            name: "John Doe",
-            email: "john@example.com",
-            image: "https://example.com/avatar.jpg",
-            bio: "Software developer",
-            followerCount: 10,
-            followingCount: 5,
-            createdAt: new Date("2024-01-01"),
-        };
-
-        const mockPosts = [
-            {
-                id: "post-1",
-                title: "Draft Post",
-                slug: "draft-post",
-                content: "Draft content",
-                excerpt: "Draft excerpt",
-                coverImage: null,
-                status: "draft",
-                authorId: mockUserId,
-                createdAt: new Date("2024-01-15"),
-                author: {
-                    id: mockUserId,
-                    name: "John Doe",
-                    email: "john@example.com",
-                    image: "https://example.com/avatar.jpg",
-                },
-                postCategories: [],
-            },
-        ];
-
-        mockGetServerSession.mockResolvedValue({
-            user: { id: mockUserId },
-        } as any);
-
-        (db.query.users.findFirst as jest.Mock).mockResolvedValue(mockUser);
-        (db.query.posts.findMany as jest.Mock).mockResolvedValue(mockPosts);
-
-        const req = new NextRequest("http://localhost:3000/api/users/user-123");
-        const params = Promise.resolve({ id: mockUserId });
-
-        const response = await GET(req, { params });
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(data.user.isOwnProfile).toBe(true);
-        expect(data.user.posts).toHaveLength(1);
-        expect(data.user.posts[0].status).toBe("draft");
     });
 
     it("should return 404 if user not found", async () => {
@@ -208,7 +119,7 @@ describe("GET /api/users/[id]", () => {
             user: { id: mockCurrentUserId },
         } as any);
 
-        (db.query.users.findFirst as jest.Mock).mockResolvedValue(null);
+        (UserService.getUserProfile as jest.Mock).mockResolvedValue(null);
 
         const req = new NextRequest("http://localhost:3000/api/users/nonexistent");
         const params = Promise.resolve({ id: "nonexistent" });
@@ -218,34 +129,6 @@ describe("GET /api/users/[id]", () => {
 
         expect(response.status).toBe(404);
         expect(data.error).toBe("User not found");
-    });
-
-    it("should handle unauthenticated requests", async () => {
-        const mockUser = {
-            id: mockUserId,
-            name: "John Doe",
-            email: "john@example.com",
-            image: "https://example.com/avatar.jpg",
-            bio: "Software developer",
-            followerCount: 10,
-            followingCount: 5,
-            createdAt: new Date("2024-01-01"),
-        };
-
-        mockGetServerSession.mockResolvedValue(null);
-
-        (db.query.users.findFirst as jest.Mock).mockResolvedValue(mockUser);
-        (db.query.posts.findMany as jest.Mock).mockResolvedValue([]);
-
-        const req = new NextRequest("http://localhost:3000/api/users/user-123");
-        const params = Promise.resolve({ id: mockUserId });
-
-        const response = await GET(req, { params });
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(data.user.isFollowing).toBe(false);
-        expect(data.user.isOwnProfile).toBe(false);
     });
 });
 
@@ -262,30 +145,19 @@ describe("PUT /api/users/[id]", () => {
             bio: "Updated bio",
         };
 
-        const mockUpdatedUser = {
+        const mockUpdatedProfile = {
             id: mockUserId,
             name: "Jane Doe",
-            email: "jane@example.com",
-            image: "https://example.com/avatar.jpg",
             bio: "Updated bio",
-            followerCount: 10,
-            followingCount: 5,
-            createdAt: new Date("2024-01-01"),
+            // ... other fields irrelevant for this test assertion
         };
 
         mockGetServerSession.mockResolvedValue({
             user: { id: mockUserId },
         } as any);
 
-        (db.update as jest.Mock).mockReturnValue({
-            set: jest.fn().mockReturnValue({
-                where: jest.fn().mockReturnValue({
-                    returning: jest.fn().mockResolvedValue([mockUpdatedUser]),
-                }),
-            }),
-        });
-
-        (db.query.posts.findMany as jest.Mock).mockResolvedValue([]);
+        // Update returns generic success/object
+        (UserService.updateUserProfile as jest.Mock).mockResolvedValue(mockUpdatedProfile);
 
         const req = new NextRequest("http://localhost:3000/api/users/user-123", {
             method: "PUT",
