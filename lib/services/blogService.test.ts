@@ -21,9 +21,7 @@ jest.mock("@/lib/cloudinary", () => ({
     uploadImageToCloudinary: jest.fn(),
 }));
 
-const mockMathRandom = Object.create(global.Math);
-mockMathRandom.random = jest.fn(() => 0.5);
-global.Math = mockMathRandom;
+
 
 describe("BlogService", () => {
     beforeEach(() => {
@@ -47,12 +45,14 @@ describe("BlogService", () => {
             });
             (db.insert as jest.Mock).mockImplementation(mockInsert);
 
-            // Mock DB findFirst for the return value
-            (db.query.posts.findFirst as jest.Mock).mockResolvedValue({
-                id: "post-123",
-                title: "Test Blog Post",
-                slug: "test-blog-post-x9d2s",
-            });
+            // Mock DB findFirst for the slug check (return null = no collision) AND return value
+            (db.query.posts.findFirst as jest.Mock)
+                .mockResolvedValueOnce(null) // for generateUniqueSlug check
+                .mockResolvedValueOnce({ // for createPost return
+                    id: "post-123",
+                    title: "Test Blog Post",
+                    slug: "test-blog-post", // Expected simplified slug
+                });
 
             const result = await BlogService.createPost(validParams);
 
@@ -61,7 +61,7 @@ describe("BlogService", () => {
             const insertCall = mockInsert().values.mock.calls[0][0];
             // 0.5.toString(36) is "0.i" -> substring(2, 7) might depend on implementation but roughly "i..."
             // Actually, let's just check it contains the base slug.
-            expect(insertCall.slug).toContain("test-blog-post-");
+            expect(insertCall.slug).toBe("test-blog-post");
             expect(insertCall.title).toBe(validParams.title);
 
             expect(result).toEqual(expect.objectContaining({ id: "post-123" }));
@@ -76,7 +76,9 @@ describe("BlogService", () => {
                 }),
             });
             (db.insert as jest.Mock).mockImplementation(mockInsert);
-            (db.query.posts.findFirst as jest.Mock).mockResolvedValue({});
+            (db.query.posts.findFirst as jest.Mock)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({});
 
             await BlogService.createPost({
                 ...validParams,
@@ -98,7 +100,9 @@ describe("BlogService", () => {
                 values: mockInsertValues,
             });
             (db.insert as jest.Mock).mockImplementation(mockInsert);
-            (db.query.posts.findFirst as jest.Mock).mockResolvedValue({});
+            (db.query.posts.findFirst as jest.Mock)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({});
 
             await BlogService.createPost({
                 ...validParams,

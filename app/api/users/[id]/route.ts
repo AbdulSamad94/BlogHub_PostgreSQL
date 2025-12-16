@@ -64,23 +64,14 @@ export async function PUT(
             return NextResponse.json({ error: "Bio must be a string" }, { status: 400 });
         }
 
-        await UserService.updateUserProfile(userId, {
+        const updatedUser = await UserService.updateUserProfile(userId, {
             name: body.name,
             bio: body.bio,
         });
 
-        // We need to re-fetch the full profile or construct it. 
-        // The service update returns the user object, but the frontend expects posts included in the response typically?
-        // Checking existing implementation: old one returned user + posts.
-        // Let's reuse getUserProfile to ensure consistency or modify updateProfile to return everything.
-        // For efficiency, the frontend likely just needs the updated user info, but let's stick to the previous contract:
-        // "return user object with posts"
-
-        const fullUserProfile = await UserService.getUserProfile(userId, session.user.id);
-
         return NextResponse.json({
             success: true,
-            user: fullUserProfile
+            user: updatedUser
         });
     } catch (error) {
         console.error("Update user profile error:", error);

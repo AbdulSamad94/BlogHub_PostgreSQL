@@ -3,6 +3,7 @@ import { getAuthSession } from "@/lib/auth/authOptions";
 import { db } from "@/lib/db";
 import { createBlogSchema } from "@/lib/validations/blog";
 import { BlogService } from "@/lib/services/blogService";
+import { ZodError } from "zod";
 
 export async function POST(req: Request) {
     try {
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
     } catch (error) {
         console.error("Create blog error:", error);
 
-        if (error instanceof Error && error.name === "ZodError" || (error as unknown as Error)?.name === "ZodError") {
+        if (error instanceof ZodError) {
             return NextResponse.json(
                 { error: "Validation failed", details: error },
                 { status: 400 }

@@ -158,8 +158,6 @@ describe("PUT /api/users/[id]", () => {
 
         // Update returns generic success/object
         (UserService.updateUserProfile as jest.Mock).mockResolvedValue(mockUpdatedProfile);
-        // Get profile returns full object
-        (UserService.getUserProfile as jest.Mock).mockResolvedValue(mockUpdatedProfile);
 
         const req = new NextRequest("http://localhost:3000/api/users/user-123", {
             method: "PUT",

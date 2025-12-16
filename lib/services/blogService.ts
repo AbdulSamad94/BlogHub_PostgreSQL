@@ -18,17 +18,29 @@ export interface CreatePostParams {
 
 export class BlogService {
     /**
-     * Generates a collision-resistant slug.
-     * Format: my-blog-title-x9d2s
+     * Generates a collision-resistant slug by checking the database.
      */
-    private static generateSlug(title: string): string {
+    private static async generateUniqueSlug(title: string): Promise<string> {
         const baseSlug = slugify(title, {
             lower: true,
             strict: true,
         });
-        // Simple random string generator to avoid ESM issues with nanoid in Jest
-        const suffix = Math.random().toString(36).substring(2, 7);
-        return `${baseSlug}-${suffix}`;
+
+        let slug = baseSlug;
+        let counter = 1;
+
+        while (true) {
+            const existing = await db.query.posts.findFirst({
+                where: eq(posts.slug, slug),
+            });
+
+            if (!existing) break;
+
+            slug = `${baseSlug}-${counter}`;
+            counter++;
+        }
+
+        return slug;
     }
 
     static async createPost(params: CreatePostParams) {
@@ -47,7 +59,7 @@ export class BlogService {
         }
 
         // 2. Generate Slug
-        const slug = this.generateSlug(params.title);
+        const slug = await this.generateUniqueSlug(params.title);
 
         // 3. Insert Post
         const [newPost] = await db
@@ -166,7 +178,7 @@ export class BlogService {
 
         // 3. Handle Slug change
         const newSlug = params.title !== existingPost.title
-            ? this.generateSlug(params.title)
+            ? await this.generateUniqueSlug(params.title)
             : existingPost.slug;
 
         // 4. Update Post
