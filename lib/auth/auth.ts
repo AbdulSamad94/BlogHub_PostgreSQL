@@ -7,6 +7,8 @@ import { users } from "@/lib/db/schema/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
+import { UserService } from "@/lib/services/userService";
+
 const DEFAULT_PROFILE_IMAGE = "/default-profile.jpeg";
 
 export const authOptions: NextAuthOptions = {
@@ -25,7 +27,7 @@ export const authOptions: NextAuthOptions = {
                 email: { label: "Email", type: "email" },
                 password: { label: "Password", type: "password" },
             },
-            async authorize(credentials, req) {
+            async authorize(credentials) {
                 if (!credentials?.email || !credentials?.password) return null;
 
                 const user = await db.query.users.findFirst({
@@ -64,28 +66,11 @@ export const authOptions: NextAuthOptions = {
             if (!user?.email) return false;
 
             if (account?.provider === "google" || account?.provider === "github") {
-                try {
-                    const existingUser = await db.query.users.findFirst({
-                        where: eq(users.email, user.email),
-                    });
-
-                    if (!existingUser) {
-                        await db.insert(users).values({
-                            name: user.name ?? "Unnamed User",
-                            email: user.email,
-                            passwordHash: null,
-                            image: user.image ?? DEFAULT_PROFILE_IMAGE,
-                            provider: account.provider,
-                            providerAccountId: account.providerAccountId ?? null,
-                        });
-                        console.log("OAuth user saved to DB:", user.email);
-                    } else {
-                        console.log("OAuth user already exists:", user.email);
-                    }
-                } catch (error) {
-                    console.error("Error saving OAuth user to DB:", error);
-                    return false;
-                }
+                const isSuccess = await UserService.handleOauthUser(
+                    { email: user.email, name: user.name || "Unnamed User", image: user.image || undefined },
+                    { provider: account.provider, providerAccountId: account.providerAccountId || "" }
+                );
+                return isSuccess;
             }
 
             return true;
