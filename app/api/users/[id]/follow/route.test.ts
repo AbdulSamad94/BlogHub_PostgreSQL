@@ -32,20 +32,23 @@ jest.mock("@/lib/auth/auth", () => ({
     authOptions: {},
 }));
 
-jest.mock("@/lib/db", () => ({
-    db: {
-        query: {
-            users: {
-                findFirst: jest.fn(),
-            },
-            follows: {
-                findFirst: jest.fn(),
-            },
+const mockDb: any = {
+    query: {
+        users: {
+            findFirst: jest.fn(),
         },
-        insert: jest.fn(),
-        delete: jest.fn(),
-        execute: jest.fn(),
+        follows: {
+            findFirst: jest.fn(),
+        },
     },
+    insert: jest.fn(),
+    delete: jest.fn(),
+    execute: jest.fn(),
+    transaction: jest.fn(async (callback) => callback(mockDb)),
+};
+
+jest.mock("@/lib/db", () => ({
+    db: mockDb,
 }));
 
 jest.mock("@/lib/db/schema/schema", () => ({

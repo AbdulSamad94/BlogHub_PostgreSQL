@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { Search, Plus, LogIn } from "lucide-react";
+import { Plus, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useSession } from "next-auth/react";
 import { UserProfileDropdown } from "@/components/UserProfileDropdown";
+import { SearchBar } from "@/components/search-bar";
+
+// ...
 
 export function Navbar() {
   const { data: session } = useSession();
@@ -27,14 +29,8 @@ export function Navbar() {
           </Link>
 
           {/* Search Bar */}
-          <div className="hidden md:flex flex-1 max-w-md mx-8">
-            <div className="relative w-full">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search blogs..."
-                className="pl-10 bg-secondary border-0"
-              />
-            </div>
+          <div className="hidden md:flex flex-1 mx-8 justify-center">
+            <SearchBar />
           </div>
 
           {/* Right Actions */}

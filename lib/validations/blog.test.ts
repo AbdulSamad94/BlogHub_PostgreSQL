@@ -1,15 +1,17 @@
-import { createBlogSchema } from './blog';
+import { createPostSchema } from './blog';
 
 describe('Blog Validation Schema', () => {
   test('validates correct blog data', () => {
     const validBlog = {
       title: 'My Blog Post That Is Adequate Length',
       content: '<p>This is my blog post content that is adequately long enough to pass the validation criteria that checks for minimum length</p>',
-      coverImage: 'data:image/jpeg;base64,abcd1234',
-      tags: ['tech', 'javascript']
+      coverImage: 'https://example.com/image.jpg',
+      categoryIds: ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12'], // UUIDs
+      status: 'draft',
+      authorId: 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13'
     };
 
-    const result = createBlogSchema.safeParse(validBlog);
+    const result = createPostSchema.safeParse(validBlog);
     expect(result.success).toBe(true);
   });
 
@@ -17,15 +19,14 @@ describe('Blog Validation Schema', () => {
     const invalidBlog = {
       title: '',
       content: '<p>This is my blog post content</p>',
-      coverImage: 'data:image/jpeg;base64,...',
-      tags: ['tech']
+      status: 'draft',
+      authorId: 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13'
     };
 
-    const result = createBlogSchema.safeParse(invalidBlog);
+    const result = createPostSchema.safeParse(invalidBlog);
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0].path[0]).toBe('title');
-      expect(result.error.issues[0].message).toContain('characters'); // Expecting character count error
+      expect(result.error.flatten().fieldErrors.title).toBeDefined();
     }
   });
 
@@ -33,47 +34,37 @@ describe('Blog Validation Schema', () => {
     const invalidBlog = {
       title: 'My Blog Post',
       content: '<p>Hi</p>', // Too short
-      coverImage: 'data:image/jpeg;base64,...',
-      tags: ['tech']
+      status: 'draft',
+      authorId: 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13'
     };
 
-    const result = createBlogSchema.safeParse(invalidBlog);
+    const result = createPostSchema.safeParse(invalidBlog);
     expect(result.success).toBe(false);
   });
 
-  test('fails validation for invalid cover image format', () => {
+  test('fails validation for invalid cover image URL', () => {
     const invalidBlog = {
       title: 'My Blog Post',
-      content: '<p>This is my blog post content</p>',
-      coverImage: 'not-a-valid-base64-string',
-      tags: ['tech']
+      content: '<p>This is my blog post content that is long enough</p>',
+      coverImage: 'not-a-valid-url',
+      status: 'draft',
+      authorId: 'c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a13'
     };
 
-    const result = createBlogSchema.safeParse(invalidBlog);
+    const result = createPostSchema.safeParse(invalidBlog);
     expect(result.success).toBe(false);
   });
 
-  test('fails validation for too many tags', () => {
+  test('fails validation for invalid UUIDs', () => {
     const invalidBlog = {
       title: 'My Blog Post',
       content: '<p>This is my blog post content</p>',
-      coverImage: 'data:image/jpeg;base64,...',
-      tags: ['tag1', 'tag2', 'tag3', 'tag4', 'tag5', 'tag6'] // More than max
+      categoryIds: ['invalid-uuid'],
+      status: 'draft',
+      authorId: 'invalid-uuid'
     };
 
-    const result = createBlogSchema.safeParse(invalidBlog);
-    expect(result.success).toBe(false);
-  });
-
-  test('fails validation for tags with invalid format', () => {
-    const invalidBlog = {
-      title: 'My Blog Post',
-      content: '<p>This is my blog post content</p>',
-      coverImage: 'data:image/jpeg;base64,...',
-      tags: ['valid-tag', 'invalid tag with space'] // Space not allowed
-    };
-
-    const result = createBlogSchema.safeParse(invalidBlog);
+    const result = createPostSchema.safeParse(invalidBlog);
     expect(result.success).toBe(false);
   });
 });

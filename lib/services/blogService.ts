@@ -2,23 +2,17 @@ import { db } from "@/lib/db";
 import { posts, postCategories, comments, postLikes, categories } from "@/lib/db/schema/schema";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import slugify from "slugify";
-import { eq, and, inArray, SQL, desc } from "drizzle-orm";
+import { eq, and, or, ilike, inArray, SQL, desc } from "drizzle-orm";
+import { CreatePostInput, UpdatePostInput, POST_STATUS } from "@/lib/validations/blog";
 
-export interface CreatePostParams {
-    title: string;
-    content: string;
-    excerpt?: string;
-    coverImage?: string; // URL if already uploaded
-    coverImageBase64?: string; // For new uploads
-    coverImageType?: string;
-    status: "draft" | "published";
-    authorId: string;
-    categoryIds?: string[];
-}
+// Helper type for status since it's an enum in Zod but string in DB
+type PostStatus = (typeof POST_STATUS)[number];
 
 export class BlogService {
     /**
      * Generates a collision-resistant slug by checking the database.
+     * Note: This checks outside the transaction initially, but slug uniqueness constraint 
+     * in DB should handle final race conditions if strictly enforced.
      */
     private static async generateUniqueSlug(title: string): Promise<string> {
         const baseSlug = slugify(title, {
@@ -43,68 +37,54 @@ export class BlogService {
         return slug;
     }
 
-    static async createPost(params: CreatePostParams) {
-        // 1. Handle Image Upload
-        let finalCoverImage = params.coverImage;
+    static async createPost(params: CreatePostInput) {
+        return await db.transaction(async (tx) => {
+            // 1. Handle Image Upload
+            let finalCoverImage = params.coverImage;
 
-        if (params.coverImageBase64) {
-            try {
-                finalCoverImage = await uploadImageToCloudinary(
-                    params.coverImageBase64,
-                    params.coverImageType || "image/jpeg"
-                );
-            } catch (error) {
-                throw new Error("Failed to upload cover image", error as Error);
+            if (params.coverImageBase64) {
+                try {
+                    finalCoverImage = await uploadImageToCloudinary(
+                        params.coverImageBase64,
+                        params.coverImageType || "image/jpeg"
+                    );
+                } catch (error) {
+                    // Log error and throw distinct message to be caught by API
+                    console.error("Cloudinary upload failed:", error);
+                    throw new Error("Failed to upload cover image");
+                }
             }
-        }
 
-        // 2. Generate Slug
-        const slug = await this.generateUniqueSlug(params.title);
+            // 2. Generate Slug
+            const slug = await this.generateUniqueSlug(params.title);
 
-        // 3. Insert Post
-        const [newPost] = await db
-            .insert(posts)
-            .values({
-                title: params.title,
-                slug,
-                content: params.content,
-                excerpt: params.excerpt || null,
-                coverImage: finalCoverImage || null,
-                status: params.status,
-                authorId: params.authorId,
-            })
-            .returning();
+            // 3. Insert Post
+            const [newPost] = await tx
+                .insert(posts)
+                .values({
+                    title: params.title,
+                    slug,
+                    content: params.content,
+                    excerpt: params.excerpt || null,
+                    coverImage: finalCoverImage || null,
+                    status: params.status as PostStatus,
+                    authorId: params.authorId,
+                })
+                .returning();
 
-        // 4. Link Categories
-        if (params.categoryIds && params.categoryIds.length > 0) {
-            const categoryValues = params.categoryIds.map((categoryId) => ({
-                postId: newPost.id,
-                categoryId,
-            }));
-            await db.insert(postCategories).values(categoryValues);
-        }
+            // 4. Link Categories
+            if (params.categoryIds && params.categoryIds.length > 0) {
+                const categoryValues = params.categoryIds.map((categoryId) => ({
+                    postId: newPost.id,
+                    categoryId,
+                }));
+                await tx.insert(postCategories).values(categoryValues);
+            }
 
-        // 5. Return complete post
-        const completePost = await db.query.posts.findFirst({
-            where: eq(posts.id, newPost.id),
-            with: {
-                author: {
-                    columns: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                    },
-                },
-                postCategories: {
-                    with: {
-                        category: true,
-                    },
-                },
-            },
+            // Return basic post info or fetch full (in tx)
+            return newPost;
         });
-
-        return completePost;
+        // Note: Caller can fetch full post if needed, separating concerns.
     }
 
     static async getPostBySlug(slug: string) {
@@ -151,104 +131,97 @@ export class BlogService {
         });
     }
 
-    static async updatePost(slug: string, params: CreatePostParams) {
-        // 1. Find existing post
-        const existingPost = await db.query.posts.findFirst({
-            where: eq(posts.slug, slug),
-        });
+    static async updatePost(slug: string, params: UpdatePostInput) {
+        return await db.transaction(async (tx) => {
+            // 1. Find existing post
+            const existingPost = await tx.query.posts.findFirst({
+                where: eq(posts.slug, slug),
+            });
 
-        if (!existingPost) {
-            throw new Error("Blog post not found");
-        }
+            if (!existingPost) {
+                throw new Error("Blog post not found");
+            }
 
-        // 2. Handle cover image
-        let finalCoverImage = params.coverImage || existingPost.coverImage;
-        if (params.coverImageBase64) {
-            try {
-                finalCoverImage = await uploadImageToCloudinary(
-                    params.coverImageBase64,
-                    params.coverImageType || "image/jpeg"
-                );
-            } catch (error: unknown) {
-                if (error instanceof Error) {
+            // 2. Handle cover image
+            let finalCoverImage = params.coverImage || existingPost.coverImage;
+            if (params.coverImageBase64) {
+                try {
+                    finalCoverImage = await uploadImageToCloudinary(
+                        params.coverImageBase64,
+                        params.coverImageType || "image/jpeg"
+                    );
+                } catch (error) {
+                    console.error("Cloudinary upload failed:", error);
                     throw new Error("Failed to upload cover image");
                 }
             }
-        }
 
-        // 3. Handle Slug change
-        const newSlug = params.title !== existingPost.title
-            ? await this.generateUniqueSlug(params.title)
-            : existingPost.slug;
+            // 3. Handle Slug change
+            // newTitle was unused, removing it.
+            const newSlug = params.title && params.title !== existingPost.title
+                ? await this.generateUniqueSlug(params.title)
+                : existingPost.slug;
 
-        // 4. Update Post
-        const [updatedPost] = await db
-            .update(posts)
-            .set({
-                title: params.title,
-                slug: newSlug,
-                content: params.content,
-                excerpt: params.excerpt || null,
-                coverImage: finalCoverImage,
-                status: params.status,
+            // 4. Update Post
+            // Build update object based on inputs to avoid overwriting with undefined
+            // Using Partial<typeof posts.$inferInsert> or similar would be better, but 'any' with manual checks works for now if lint allows.
+            // Alternatively, define a partial interface.
+            const updateData: Record<string, unknown> = {
                 updatedAt: new Date(),
-            })
-            .where(eq(posts.slug, slug))
-            .returning();
-
-        // 5. Update Categories
-        if (params.categoryIds && Array.isArray(params.categoryIds)) {
-            await db.delete(postCategories).where(eq(postCategories.postId, existingPost.id));
-
-            if (params.categoryIds.length > 0) {
-                const categoryValues = params.categoryIds.map((categoryId) => ({
-                    postId: existingPost.id,
-                    categoryId,
-                }));
-                await db.insert(postCategories).values(categoryValues);
+            };
+            if (params.title) {
+                updateData.title = params.title;
+                updateData.slug = newSlug;
             }
-        }
+            if (params.content) updateData.content = params.content;
+            if (params.excerpt !== undefined) updateData.excerpt = params.excerpt;
+            updateData.coverImage = finalCoverImage;
+            if (params.status) updateData.status = params.status;
 
-        // 6. Return complete post
-        return await db.query.posts.findFirst({
-            where: eq(posts.id, updatedPost.id),
-            with: {
-                author: {
-                    columns: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                    },
-                },
-                postCategories: {
-                    with: {
-                        category: true,
-                    },
-                },
-            },
+            const [updatedPost] = await tx
+                .update(posts)
+                .set(updateData)
+                .where(eq(posts.slug, slug))
+                .returning();
+
+            // 5. Update Categories
+            if (params.categoryIds && Array.isArray(params.categoryIds)) {
+                await tx.delete(postCategories).where(eq(postCategories.postId, existingPost.id));
+
+                if (params.categoryIds.length > 0) {
+                    const categoryValues = params.categoryIds.map((categoryId) => ({
+                        postId: existingPost.id,
+                        categoryId,
+                    }));
+                    await tx.insert(postCategories).values(categoryValues);
+                }
+            }
+
+            return updatedPost;
         });
     }
 
     static async deletePost(slug: string) {
-        const post = await db.query.posts.findFirst({
-            where: eq(posts.slug, slug),
+        return await db.transaction(async (tx) => {
+            const post = await tx.query.posts.findFirst({
+                where: eq(posts.slug, slug),
+            });
+
+            if (!post) {
+                throw new Error("Blog post not found");
+            }
+
+            // Delete cascade within transaction
+            await tx.delete(postCategories).where(eq(postCategories.postId, post.id));
+            await tx.delete(comments).where(eq(comments.postId, post.id));
+            await tx.delete(postLikes).where(eq(postLikes.postId, post.id));
+            await tx.delete(posts).where(eq(posts.id, post.id));
+
+            return true;
         });
-
-        if (!post) {
-            throw new Error("Blog post not found");
-        }
-
-        // Delete cascade
-        await db.delete(postCategories).where(eq(postCategories.postId, post.id));
-        await db.delete(comments).where(eq(comments.postId, post.id));
-        await db.delete(postLikes).where(eq(postLikes.postId, post.id));
-        await db.delete(posts).where(eq(posts.id, post.id)); // Delete by ID is safer
-
-        return true;
     }
 
-    static async getAllPosts(filters: { status?: "draft" | "published"; authorId?: string; categorySlug?: string } = {}) {
+    static async getAllPosts(filters: { status?: PostStatus; authorId?: string; categorySlug?: string; search?: string } = {}) {
         const whereConditions: SQL[] = [];
 
         if (filters.status) {
@@ -268,8 +241,18 @@ export class BlogService {
             whereConditions.push(inArray(posts.id, subquery));
         }
 
-        return await db.query.posts.findMany({
-            where: and(...whereConditions),
+        if (filters.search) {
+            const searchPattern = `%${filters.search}%`;
+            const searchCondition = or(
+                ilike(posts.title, searchPattern),
+            );
+            if (searchCondition) {
+                whereConditions.push(searchCondition);
+            }
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const queryOptions: any = {
             with: {
                 author: {
                     columns: {
@@ -286,6 +269,12 @@ export class BlogService {
                 },
             },
             orderBy: [desc(posts.createdAt)],
-        });
+        };
+
+        if (whereConditions.length > 0) {
+            queryOptions.where = and(...whereConditions);
+        }
+
+        return await db.query.posts.findMany(queryOptions);
     }
 }

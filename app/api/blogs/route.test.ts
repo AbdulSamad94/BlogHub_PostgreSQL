@@ -24,7 +24,7 @@ jest.mock('@/lib/db', () => ({
 }));
 
 jest.mock('@/lib/validations/blog', () => ({
-  createBlogSchema: {
+  createPostSchema: {
     parse: jest.fn(),
   },
 }));
@@ -34,7 +34,7 @@ import { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { db } from '@/lib/db';
 import { BlogService } from "@/lib/services/blogService";
-import { createBlogSchema } from '@/lib/validations/blog';
+import { createPostSchema } from '@/lib/validations/blog';
 import { ZodError } from 'zod';
 
 describe('Blogs API Route', () => {
@@ -59,7 +59,7 @@ describe('Blogs API Route', () => {
 
     test('creates a new blog post successfully via Service', async () => {
       // Mock validation
-      (createBlogSchema.parse as jest.Mock).mockImplementation((data) => data);
+      (createPostSchema.parse as jest.Mock).mockImplementation((data) => data);
 
       // Mock session
       (getServerSession as jest.Mock).mockResolvedValue({
@@ -111,7 +111,7 @@ describe('Blogs API Route', () => {
       });
 
       // Mock validation to throw real ZodError
-      (createBlogSchema.parse as jest.Mock).mockImplementation(() => {
+      (createPostSchema.parse as jest.Mock).mockImplementation(() => {
         throw new ZodError([]);
       });
 
@@ -132,10 +132,6 @@ describe('Blogs API Route', () => {
   });
 
   describe('GET /api/blogs', () => {
-    // Keep existing GET tests as they likely don't use the service heavily yet (or can remain as reading from DB directly is fine for GETs often)
-    // But ideally, GET logic should also move to service. For now, we updated POST mainly.
-    // We will just retain the basic GET tests that mock the DB directly.
-
     test('returns all published blog posts using Service', async () => {
       const mockPosts = [{ id: '1', title: 'Test' }];
       (BlogService.getAllPosts as jest.Mock).mockResolvedValue(mockPosts);
