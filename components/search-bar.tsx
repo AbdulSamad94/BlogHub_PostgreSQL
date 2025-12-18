@@ -105,9 +105,8 @@ export function SearchBar() {
                       <Image
                         src={post.coverImage}
                         alt={post.title}
-                        width={4096}
-                        height={4096}
-                        className="w-full h-full object-cover"
+                        fill
+                        className="object-cover"
                       />
                     </div>
                   )}
