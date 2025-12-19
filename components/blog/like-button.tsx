@@ -18,19 +18,13 @@ interface LikeButtonProps {
 export function LikeButton({
   postId,
   initialLikeCount = 0,
-  initialHasLiked = false,
+  initialHasLiked,
 }: LikeButtonProps) {
   const [likeCount, setLikeCount] = useState(initialLikeCount);
-  const [hasLiked, setHasLiked] = useState(initialHasLiked);
+  const [hasLiked, setHasLiked] = useState(initialHasLiked ?? false);
   const [isLoading, setIsLoading] = useState(false);
   const { data: session } = useSession();
   const router = useRouter();
-
-  // Sync with props if they change (optional, depending on parent behavior)
-  useEffect(() => {
-    setLikeCount(initialLikeCount);
-    setHasLiked(initialHasLiked);
-  }, [initialLikeCount, initialHasLiked]);
 
   // Fetch initial status ONLY if not provided (fallback)
   useEffect(() => {
