@@ -16,6 +16,8 @@ export interface Blog {
   status: string;
   createdAt: string;
   author: Author;
+  likeCount: number;
+  hasLiked?: boolean;
   postCategories?: Array<{
     category: Category;
   }>;

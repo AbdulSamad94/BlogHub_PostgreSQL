@@ -76,7 +76,7 @@ describe("Blog Detail API Routes", () => {
       const data = await response.json();
       expect(data.success).toBe(true);
       expect(data.post.title).toBe("Test Blog");
-      expect(mockGetPostBySlug).toHaveBeenCalledWith("test-blog");
+      expect(mockGetPostBySlug).toHaveBeenCalledWith("test-blog", "user1");
     });
 
     test("returns 404 for non-existent blog", async () => {

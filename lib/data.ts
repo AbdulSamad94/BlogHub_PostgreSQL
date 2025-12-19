@@ -132,6 +132,36 @@ export const blogApi = {
       throw error;
     }
   },
+
+  likePost: async (id: string): Promise<{ success: boolean; message: string }> => {
+    try {
+      const response = await apiClient.post<{ success: true; message: string }>(`/blogs/${id}/like`, {});
+      return response.data;
+    } catch (error) {
+      console.error(`Error liking post ${id}:`, error);
+      throw error;
+    }
+  },
+
+  unlikePost: async (id: string): Promise<{ success: boolean; message: string }> => {
+    try {
+      const response = await apiClient.delete<{ success: true; message: string }>(`/blogs/${id}/like`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error unliking post ${id}:`, error);
+      throw error;
+    }
+  },
+
+  getPostLikeStatus: async (id: string): Promise<{ success: true; likeCount: number; hasLiked: boolean }> => {
+    try {
+      const response = await apiClient.get<{ success: true; likeCount: number; hasLiked: boolean }>(`/blogs/${id}/like`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error getting like status for post ${id}:`, error);
+      throw error;
+    }
+  },
 };
 
 // Category API
