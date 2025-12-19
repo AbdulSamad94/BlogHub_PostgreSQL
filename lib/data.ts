@@ -63,6 +63,16 @@ export const blogApi = {
     }
   },
 
+  searchBlogs: async (query: string): Promise<{ posts: Blog[] }> => {
+    try {
+      const response = await apiClient.get<BlogsResponse>(`/blogs?search=${encodeURIComponent(query)}`);
+      return { posts: response.data.posts };
+    } catch (error) {
+      console.error(`Error searching blogs with query "${query}":`, error);
+      throw error;
+    }
+  },
+
   getBlogById: async (id: string): Promise<{ post: Blog }> => {
     try {
       const response = await apiClient.get<BlogResponse>(`/blogs/${id}`);

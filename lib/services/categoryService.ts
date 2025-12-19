@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { categories } from "@/lib/db/schema/schema";
+import { eq } from "drizzle-orm";
 import slugify from "slugify";
+import { CreateCategoryInput } from "@/lib/validations/category";
 
 export class CategoryService {
     /**
@@ -14,16 +16,26 @@ export class CategoryService {
 
     /**
      * Creates a new category
+     * Expects validated input
      */
-    static async createCategory(data: { name: string; description?: string }) {
+    static async createCategory(data: CreateCategoryInput) {
         const slug = slugify(data.name, { lower: true, strict: true });
+
+        // Check for duplicate slug
+        const existing = await db.query.categories.findFirst({
+            where: eq(categories.slug, slug),
+        });
+
+        if (existing) {
+            throw new Error(`Category with slug '${slug}' already exists`);
+        }
 
         const [newCategory] = await db
             .insert(categories)
             .values({
                 name: data.name,
                 slug,
-                description: data.description || null,
+                description: data.description ?? null,
             })
             .returning();
 

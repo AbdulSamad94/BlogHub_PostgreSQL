@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth/authOptions";
 import { UserService } from "@/lib/services/userService";
+import { userUpdateSchema } from "@/lib/validations/user";
+import { z } from "zod";
 
 // GET /api/users/[id] - Fetch user profile with posts
 export async function GET(
     req: Request,
     { params }: { params: Promise<{ id: string }> }
-
 ) {
     try {
         const userId = (await params).id;
@@ -52,28 +53,30 @@ export async function PUT(
 
         const body = await req.json();
 
-        // Basic validation before calling service
-        if (body.name !== undefined && (typeof body.name !== "string" || body.name.trim().length === 0)) {
-            return NextResponse.json(
-                { error: "Name must be a non-empty string" },
-                { status: 400 }
-            );
-        }
+        // VALIDATION: Use Zod schema
+        const validData = userUpdateSchema.parse(body);
 
-        if (body.bio !== undefined && typeof body.bio !== "string") {
-            return NextResponse.json({ error: "Bio must be a string" }, { status: 400 });
-        }
-
-        const updatedUser = await UserService.updateUserProfile(userId, {
-            name: body.name,
-            bio: body.bio,
-        });
+        const updatedUser = await UserService.updateUserProfile(userId, validData);
 
         return NextResponse.json({
             success: true,
             user: updatedUser
         });
     } catch (error) {
+        if (error instanceof z.ZodError) {
+            return NextResponse.json(
+                { error: "Validation failed", details: error.flatten() },
+                { status: 400 }
+            );
+        }
+
+        if (error instanceof Error) {
+            // Service errors (like empty update)
+            if (error.message === "No update data provided") {
+                return NextResponse.json({ error: error.message }, { status: 400 });
+            }
+        }
+
         console.error("Update user profile error:", error);
         return NextResponse.json(
             { error: "Failed to update user profile" },

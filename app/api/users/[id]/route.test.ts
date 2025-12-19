@@ -223,7 +223,7 @@ describe("PUT /api/users/[id]", () => {
         const data = await response.json();
 
         expect(response.status).toBe(400);
-        expect(data.error).toBe("Name must be a non-empty string");
+        expect(data.error).toBe("Validation failed");
     });
 
     it("should validate bio input", async () => {
@@ -241,6 +241,6 @@ describe("PUT /api/users/[id]", () => {
         const data = await response.json();
 
         expect(response.status).toBe(400);
-        expect(data.error).toBe("Bio must be a string");
+        expect(data.error).toBe("Validation failed");
     });
 });

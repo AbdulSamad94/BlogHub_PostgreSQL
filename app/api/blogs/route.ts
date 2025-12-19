@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth/authOptions";
 import { db } from "@/lib/db";
-import { createBlogSchema } from "@/lib/validations/blog";
+import { createPostSchema } from "@/lib/validations/blog";
 import { BlogService } from "@/lib/services/blogService";
 import { ZodError } from "zod";
+import { users } from "@/lib/db/schema/schema";
+import { eq } from "drizzle-orm";
 
 export async function POST(req: Request) {
     try {
@@ -13,7 +15,7 @@ export async function POST(req: Request) {
         }
 
         const user = await db.query.users.findFirst({
-            where: (users, { eq }) => eq(users.email, session.user.email),
+            where: eq(users.email, session.user.email),
         });
 
         if (!user) {
@@ -22,42 +24,28 @@ export async function POST(req: Request) {
 
         const body = await req.json();
 
-        // Prepare data for validation
-        const dataToValidate = {
-            title: body.title,
-            excerpt: body.excerpt,
-            content: body.content,
-            coverImage: undefined, // Image validation happens in service potentially, or we trust the upload logic
-            status: body.status,
-        };
-
-        const validatedData = createBlogSchema.parse(dataToValidate);
-
-        const newPost = await BlogService.createPost({
-            title: validatedData.title,
-            content: validatedData.content,
-            excerpt: validatedData.excerpt,
-            status: validatedData.status,
-            authorId: user.id,
-            coverImageBase64: body.coverImageBase64,
-            coverImageType: body.coverImageType,
-            categoryIds: body.categoryIds,
+        // VALIDATION: Parse entire body against strict Zod schema
+        // This validates title, content, images, status, AND categoryIds type
+        const validatedData = createPostSchema.parse({
+            ...body,
+            authorId: user.id // Inject authorID for validation if schema requires it, or handle in service
         });
+
+        const newPost = await BlogService.createPost(validatedData);
 
         return NextResponse.json({
             success: true,
             post: newPost,
         });
     } catch (error) {
-        console.error("Create blog error:", error);
-
         if (error instanceof ZodError) {
             return NextResponse.json(
-                { error: "Validation failed", details: error },
+                { error: "Validation failed", details: error.flatten() },
                 { status: 400 }
             );
         }
 
+        console.error("Create blog error:", error);
         return NextResponse.json(
             { error: "Failed to create blog post" },
             { status: 500 }
@@ -68,14 +56,22 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
     try {
         const { searchParams } = new URL(req.url);
-        const status = (searchParams.get("status") as "draft" | "published") || undefined;
+        const statusParam = searchParams.get("status");
+
+        let status: "draft" | "published" | undefined;
+        if (statusParam === "draft" || statusParam === "published") {
+            status = statusParam;
+        }
+
         const authorId = searchParams.get("authorId") || undefined;
         const categorySlug = searchParams.get("category") || undefined;
+        const search = searchParams.get("search") || undefined;
 
         const allPosts = await BlogService.getAllPosts({
             status,
             authorId,
-            categorySlug
+            categorySlug,
+            search
         });
 
         return NextResponse.json({

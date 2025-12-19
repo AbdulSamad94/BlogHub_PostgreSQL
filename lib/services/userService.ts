@@ -1,17 +1,28 @@
 import { db } from "@/lib/db";
 import { users, posts, follows } from "@/lib/db/schema/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
+import { UserUpdateInput } from "@/lib/validations/user";
 
 const DEFAULT_PROFILE_IMAGE = "/default-profile.jpeg";
+const POST_STATUS_PUBLISHED = "published";
+
+export interface OauthUser {
+    email: string;
+    name?: string;
+    image?: string;
+}
+
+export interface OauthAccount {
+    provider: string;
+    providerAccountId: string;
+}
 
 export class UserService {
     /**
      * Handles OAuth user creation or retrieval
+     * Throws error on failure instead of returning boolean
      */
-    static async handleOauthUser(
-        user: { email: string; name?: string; image?: string },
-        account: { provider: string; providerAccountId: string }
-    ) {
+    static async handleOauthUser(user: OauthUser, account: OauthAccount): Promise<boolean> {
         try {
             const existingUser = await db.query.users.findFirst({
                 where: eq(users.email, user.email),
@@ -26,15 +37,14 @@ export class UserService {
                     provider: account.provider,
                     providerAccountId: account.providerAccountId ?? null,
                 });
-                console.log("OAuth user saved to DB:", user.email);
-                return true;
-            } else {
-                console.log("OAuth user already exists:", user.email);
-                return true;
+                // Consider logging only in debug mode or specific logger
+                // console.log("OAuth user saved to DB:", user.email); 
             }
+
+            return true;
         } catch (error) {
-            console.error("Error saving OAuth user to DB:", error);
-            return false; // Indicating failure to sign in check
+            console.error("UserService.handleOauthUser error:", error);
+            throw new Error("Failed to handle OAuth user");
         }
     }
 
@@ -78,7 +88,7 @@ export class UserService {
         const userPosts = await db.query.posts.findMany({
             where: isOwnProfile
                 ? eq(posts.authorId, userId)
-                : and(eq(posts.authorId, userId), eq(posts.status, "published")),
+                : and(eq(posts.authorId, userId), eq(posts.status, POST_STATUS_PUBLISHED)),
             with: {
                 author: {
                     columns: {
@@ -108,11 +118,12 @@ export class UserService {
     /**
      * Updates user profile
      */
-    static async updateUserProfile(userId: string, data: { name?: string; bio?: string }) {
-        // Standardize input
+    static async updateUserProfile(userId: string, data: UserUpdateInput) {
+        // Input validation should be done by the caller (API layer) using Zod.
+        // Double check emptiness to be safe or rely on Zod.
         const updateData: { name?: string; bio?: string } = {};
-        if (data.name !== undefined) updateData.name = data.name.trim();
-        if (data.bio !== undefined) updateData.bio = data.bio.trim();
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.bio !== undefined) updateData.bio = data.bio;
 
         if (Object.keys(updateData).length === 0) {
             throw new Error("No update data provided");
@@ -138,80 +149,88 @@ export class UserService {
 
     /**
      * Follows a user
+     * Uses transaction to ensure consistency
      */
     static async followUser(currentUserId: string, targetUserId: string) {
         if (currentUserId === targetUserId) {
             throw new Error("Cannot follow yourself");
         }
 
-        const targetUser = await db.query.users.findFirst({
-            where: eq(users.id, targetUserId),
+        // Wrap in transaction for atomicity
+        // Note: Drizzle + Neon HTTP supports transactions (serialized or batched).
+        return await db.transaction(async (tx) => {
+            const targetUser = await tx.query.users.findFirst({
+                where: eq(users.id, targetUserId),
+            });
+
+            if (!targetUser) {
+                throw new Error("User not found");
+            }
+
+            const existingFollow = await tx.query.follows.findFirst({
+                where: and(
+                    eq(follows.followerId, currentUserId),
+                    eq(follows.followingId, targetUserId)
+                ),
+            });
+
+            if (existingFollow) {
+                throw new Error("Already following this user");
+            }
+
+            await tx.insert(follows).values({
+                followerId: currentUserId,
+                followingId: targetUserId,
+                createdAt: new Date(),
+            });
+
+            await tx.execute(
+                sql`UPDATE ${users} SET follower_count = follower_count + 1 WHERE ${users.id} = ${targetUserId}`
+            );
+
+            await tx.execute(
+                sql`UPDATE ${users} SET following_count = following_count + 1 WHERE ${users.id} = ${currentUserId}`
+            );
+
+            return true;
         });
-
-        if (!targetUser) {
-            throw new Error("User not found");
-        }
-
-        const existingFollow = await db.query.follows.findFirst({
-            where: and(
-                eq(follows.followerId, currentUserId),
-                eq(follows.followingId, targetUserId)
-            ),
-        });
-
-        if (existingFollow) {
-            throw new Error("Already following this user");
-        }
-
-        await db.insert(follows).values({
-            followerId: currentUserId,
-            followingId: targetUserId,
-            createdAt: new Date(),
-        });
-
-        await db.execute(
-            sql`UPDATE ${users} SET follower_count = follower_count + 1 WHERE ${users.id} = ${targetUserId}`
-        );
-
-        await db.execute(
-            sql`UPDATE ${users} SET following_count = following_count + 1 WHERE ${users.id} = ${currentUserId}`
-        );
-
-        return true;
     }
 
     /**
      * Unfollows a user
+     * Uses transaction to ensure consistency
      */
     static async unfollowUser(currentUserId: string, targetUserId: string) {
-        const existingFollow = await db.query.follows.findFirst({
-            where: and(
-                eq(follows.followerId, currentUserId),
-                eq(follows.followingId, targetUserId)
-            ),
-        });
-
-        if (!existingFollow) {
-            throw new Error("Not following this user");
-        }
-
-        await db
-            .delete(follows)
-            .where(
-                and(
+        return await db.transaction(async (tx) => {
+            const existingFollow = await tx.query.follows.findFirst({
+                where: and(
                     eq(follows.followerId, currentUserId),
                     eq(follows.followingId, targetUserId)
-                )
+                ),
+            });
+
+            if (!existingFollow) {
+                throw new Error("Not following this user");
+            }
+
+            await tx
+                .delete(follows)
+                .where(
+                    and(
+                        eq(follows.followerId, currentUserId),
+                        eq(follows.followingId, targetUserId)
+                    )
+                );
+
+            await tx.execute(
+                sql`UPDATE ${users} SET follower_count = GREATEST(follower_count - 1, 0) WHERE ${users.id} = ${targetUserId}`
             );
 
-        await db.execute(
-            sql`UPDATE ${users} SET follower_count = GREATEST(follower_count - 1, 0) WHERE ${users.id} = ${targetUserId}`
-        );
+            await tx.execute(
+                sql`UPDATE ${users} SET following_count = GREATEST(following_count - 1, 0) WHERE ${users.id} = ${currentUserId}`
+            );
 
-        await db.execute(
-            sql`UPDATE ${users} SET following_count = GREATEST(following_count - 1, 0) WHERE ${users.id} = ${currentUserId}`
-        );
-
-        return true;
+            return true;
+        });
     }
 }
