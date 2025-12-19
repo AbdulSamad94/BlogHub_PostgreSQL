@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { posts, postCategories, comments, postLikes, categories } from "@/lib/db/schema/schema";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import slugify from "slugify";
-import { eq, and, or, ilike, inArray, SQL, desc } from "drizzle-orm";
+import { eq, and, or, ilike, inArray, SQL, desc, sql } from "drizzle-orm";
 import { CreatePostInput, UpdatePostInput, POST_STATUS } from "@/lib/validations/blog";
 
 // Helper type for status since it's an enum in Zod but string in DB
@@ -87,8 +87,8 @@ export class BlogService {
         // Note: Caller can fetch full post if needed, separating concerns.
     }
 
-    static async getPostBySlug(slug: string) {
-        return await db.query.posts.findFirst({
+    static async getPostBySlug(slug: string, userId?: string) {
+        const post = await db.query.posts.findFirst({
             where: eq(posts.slug, slug),
             with: {
                 author: {
@@ -126,9 +126,20 @@ export class BlogService {
                         },
                     },
                 },
-                likes: true,
             },
         });
+
+        if (!post) return null;
+
+        let hasLiked = false;
+        if (userId) {
+            const like = await db.query.postLikes.findFirst({
+                where: and(eq(postLikes.postId, post.id), eq(postLikes.userId, userId)),
+            });
+            hasLiked = !!like;
+        }
+
+        return { ...post, hasLiked };
     }
 
     static async updatePost(slug: string, params: UpdatePostInput) {
@@ -276,5 +287,73 @@ export class BlogService {
         }
 
         return await db.query.posts.findMany(queryOptions);
+    }
+
+    static async likePost(userId: string, postId: string) {
+        // Check if already liked to avoid errors even if DB constraint exists
+        const existingLike = await db.query.postLikes.findFirst({
+            where: and(eq(postLikes.postId, postId), eq(postLikes.userId, userId)),
+        });
+
+        if (existingLike) {
+            return; // Already liked
+        }
+
+        // Insert like with explicit date to avoid driver serialization issues
+        await db.insert(postLikes).values({
+            postId,
+            userId,
+            createdAt: new Date(),
+        });
+
+        // Increment like count and update timestamp
+        await db
+            .update(posts)
+            .set({
+                likeCount: sql`${posts.likeCount} + 1`,
+                updatedAt: new Date(),
+            })
+            .where(eq(posts.id, postId));
+    }
+
+    static async unlikePost(userId: string, postId: string) {
+        const deleted = await db
+            .delete(postLikes)
+            .where(and(eq(postLikes.postId, postId), eq(postLikes.userId, userId)))
+            .returning();
+
+        if (deleted.length > 0) {
+            // Decrement like count and update timestamp
+            await db
+                .update(posts)
+                .set({
+                    // Ensure we don't go below 0 (though app logic should prevent this)
+                    likeCount: sql`GREATEST(${posts.likeCount} - 1, 0)`,
+                    updatedAt: new Date(),
+                })
+                .where(eq(posts.id, postId));
+        }
+    }
+
+    static async getPostLikeStatus(postId: string, userId?: string) {
+        const post = await db.query.posts.findFirst({
+            where: eq(posts.id, postId),
+            columns: {
+                likeCount: true,
+            },
+        });
+
+        let hasLiked = false;
+        if (userId) {
+            const like = await db.query.postLikes.findFirst({
+                where: and(eq(postLikes.postId, postId), eq(postLikes.userId, userId)),
+            });
+            hasLiked = !!like;
+        }
+
+        return {
+            likeCount: post?.likeCount || 0,
+            hasLiked,
+        };
     }
 }

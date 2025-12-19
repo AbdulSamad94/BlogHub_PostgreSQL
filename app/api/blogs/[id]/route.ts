@@ -17,7 +17,8 @@ export async function GET(
       );
     }
 
-    const post = await BlogService.getPostBySlug(id);
+    const session = await getAuthSession();
+    const post = await BlogService.getPostBySlug(id, session?.user?.id);
 
     if (!post) {
       return NextResponse.json(

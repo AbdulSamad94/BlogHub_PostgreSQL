@@ -3,7 +3,8 @@
 import { Blog } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { Heart, Share2, Edit, Trash2 } from "lucide-react";
+import { Share2, Edit, Trash2 } from "lucide-react";
+import { LikeButton } from "@/components/blog/like-button";
 import { Session } from "next-auth";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -31,7 +32,6 @@ interface BlogHeaderProps {
 }
 
 export function BlogHeader({ blog, session, blogId }: BlogHeaderProps) {
-  const [liked, setLiked] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const router = useRouter();
   const sessionData = useSession();
@@ -143,16 +143,11 @@ export function BlogHeader({ blog, session, blogId }: BlogHeaderProps) {
             </AlertDialog>
           </>
         )}
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setLiked(!liked)}
-          className={liked ? "text-red-500 shrink-0" : "shrink-0"}
-        >
-          <Heart className={`w-5 h-5 ${liked ? "fill-current" : ""}`} />
-        </Button>
-
+        <LikeButton
+          postId={blogId}
+          initialLikeCount={blog.likeCount}
+          initialHasLiked={blog.hasLiked}
+        />
         <Button
           variant="ghost"
           size="sm"
