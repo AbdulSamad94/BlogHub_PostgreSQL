@@ -7,7 +7,8 @@ import {
     pgEnum,
     integer,
     uniqueIndex,
-    index
+    index,
+    foreignKey
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { relations } from "drizzle-orm";
@@ -38,7 +39,7 @@ export const users = pgTable("users", {
 // Posts Table
 export const posts = pgTable("posts", {
     id: uuid("id").defaultRandom().primaryKey(),
-    authorId: uuid("author_id").notNull(),
+    authorId: uuid("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     title: varchar("title", { length: 200 }).notNull(),
     slug: varchar("slug", { length: 200 }).notNull().unique(),
     content: text("content").notNull(),
@@ -70,8 +71,8 @@ export const categories = pgTable("categories", {
 // Post-Categories Junction Table
 export const postCategories = pgTable("post_categories", {
     id: uuid("id").defaultRandom().primaryKey(),
-    postId: uuid("post_id").notNull(),
-    categoryId: uuid("category_id").notNull(),
+    postId: uuid("post_id").notNull().references(() => posts.id, { onDelete: "cascade" }),
+    categoryId: uuid("category_id").notNull().references(() => categories.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
     uniqueIndex("post_categories_post_category_idx").on(table.postId, table.categoryId),
@@ -80,9 +81,9 @@ export const postCategories = pgTable("post_categories", {
 // Comments Table (with nested replies support)
 export const comments = pgTable("comments", {
     id: uuid("id").defaultRandom().primaryKey(),
-    postId: uuid("post_id").notNull(),
-    authorId: uuid("author_id").notNull(),
-    parentCommentId: uuid("parent_comment_id"), // Self-reference for replies
+    postId: uuid("post_id").notNull().references(() => posts.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    parentCommentId: uuid("parent_comment_id"),
     content: text("content").notNull(),
     likeCount: integer("like_count").default(0).notNull(),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -92,13 +93,18 @@ export const comments = pgTable("comments", {
 }, (table) => ({
     postIdx: index("comments_post_idx").on(table.postId),
     authorIdx: index("comments_author_idx").on(table.authorId),
+    parentFk: foreignKey({
+        columns: [table.parentCommentId],
+        foreignColumns: [table.id],
+        name: "comments_parent_comment_id_fk"
+    }).onDelete("cascade"),
 }));
 
 // Post Likes Table
 export const postLikes = pgTable("post_likes", {
     id: uuid("id").defaultRandom().primaryKey(),
-    postId: uuid("post_id").notNull(),
-    userId: uuid("user_id").notNull(),
+    postId: uuid("post_id").notNull().references(() => posts.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
     uniqueIndex("post_likes_post_user_idx").on(table.postId, table.userId),
@@ -107,8 +113,8 @@ export const postLikes = pgTable("post_likes", {
 // Comment Likes Table
 export const commentLikes = pgTable("comment_likes", {
     id: uuid("id").defaultRandom().primaryKey(),
-    commentId: uuid("comment_id").notNull(),
-    userId: uuid("user_id").notNull(),
+    commentId: uuid("comment_id").notNull().references(() => comments.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
     uniqueIndex("comment_likes_comment_user_idx").on(table.commentId, table.userId),
@@ -117,8 +123,8 @@ export const commentLikes = pgTable("comment_likes", {
 // Follows Table (user following)
 export const follows = pgTable("follows", {
     id: uuid("id").defaultRandom().primaryKey(),
-    followerId: uuid("follower_id").notNull(),
-    followingId: uuid("following_id").notNull(),
+    followerId: uuid("follower_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    followingId: uuid("following_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
     uniqueIndex("follows_follower_following_idx").on(table.followerId, table.followingId),

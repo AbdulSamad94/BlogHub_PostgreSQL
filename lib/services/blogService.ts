@@ -1,9 +1,9 @@
 import { db } from "@/lib/db";
 import { posts, postCategories, comments, postLikes, categories } from "@/lib/db/schema/schema";
-import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import slugify from "slugify";
 import { eq, and, or, ilike, inArray, SQL, desc, sql } from "drizzle-orm";
 import { CreatePostInput, UpdatePostInput, POST_STATUS } from "@/lib/validations/blog";
+import { ServiceError } from "@/lib/errors";
 
 // Helper type for status since it's an enum in Zod but string in DB
 type PostStatus = (typeof POST_STATUS)[number];
@@ -39,26 +39,10 @@ export class BlogService {
 
     static async createPost(params: CreatePostInput) {
         return await db.transaction(async (tx) => {
-            // 1. Handle Image Upload
-            let finalCoverImage = params.coverImage;
-
-            if (params.coverImageBase64) {
-                try {
-                    finalCoverImage = await uploadImageToCloudinary(
-                        params.coverImageBase64,
-                        params.coverImageType || "image/jpeg"
-                    );
-                } catch (error) {
-                    // Log error and throw distinct message to be caught by API
-                    console.error("Cloudinary upload failed:", error);
-                    throw new Error("Failed to upload cover image");
-                }
-            }
-
-            // 2. Generate Slug
+            // 1. Generate Slug
             const slug = await this.generateUniqueSlug(params.title);
 
-            // 3. Insert Post
+            // 2. Insert Post
             const [newPost] = await tx
                 .insert(posts)
                 .values({
@@ -66,13 +50,14 @@ export class BlogService {
                     slug,
                     content: params.content,
                     excerpt: params.excerpt || null,
-                    coverImage: finalCoverImage || null,
+                    // Assume coverImage is already an uploaded URL if present
+                    coverImage: params.coverImage || null,
                     status: params.status as PostStatus,
                     authorId: params.authorId,
                 })
                 .returning();
 
-            // 4. Link Categories
+            // 3. Link Categories
             if (params.categoryIds && params.categoryIds.length > 0) {
                 const categoryValues = params.categoryIds.map((categoryId) => ({
                     postId: newPost.id,
@@ -81,10 +66,8 @@ export class BlogService {
                 await tx.insert(postCategories).values(categoryValues);
             }
 
-            // Return basic post info or fetch full (in tx)
             return newPost;
         });
-        // Note: Caller can fetch full post if needed, separating concerns.
     }
 
     static async getPostBySlug(slug: string, userId?: string) {
@@ -131,6 +114,11 @@ export class BlogService {
 
         if (!post) return null;
 
+        // SECURITY: If post is draft, ONLY allow author to view it
+        if (post.status === "draft" && post.authorId !== userId) {
+            return null;
+        }
+
         let hasLiked = false;
         if (userId) {
             const like = await db.query.postLikes.findFirst({
@@ -150,33 +138,15 @@ export class BlogService {
             });
 
             if (!existingPost) {
-                throw new Error("Blog post not found");
+                throw ServiceError.notFound("Blog post not found");
             }
 
-            // 2. Handle cover image
-            let finalCoverImage = params.coverImage || existingPost.coverImage;
-            if (params.coverImageBase64) {
-                try {
-                    finalCoverImage = await uploadImageToCloudinary(
-                        params.coverImageBase64,
-                        params.coverImageType || "image/jpeg"
-                    );
-                } catch (error) {
-                    console.error("Cloudinary upload failed:", error);
-                    throw new Error("Failed to upload cover image");
-                }
-            }
-
-            // 3. Handle Slug change
-            // newTitle was unused, removing it.
+            // 2. Handle Slug change
             const newSlug = params.title && params.title !== existingPost.title
                 ? await this.generateUniqueSlug(params.title)
                 : existingPost.slug;
 
-            // 4. Update Post
-            // Build update object based on inputs to avoid overwriting with undefined
-            // Using Partial<typeof posts.$inferInsert> or similar would be better, but 'any' with manual checks works for now if lint allows.
-            // Alternatively, define a partial interface.
+            // 3. Update Post
             const updateData: Record<string, unknown> = {
                 updatedAt: new Date(),
             };
@@ -186,7 +156,7 @@ export class BlogService {
             }
             if (params.content) updateData.content = params.content;
             if (params.excerpt !== undefined) updateData.excerpt = params.excerpt;
-            updateData.coverImage = finalCoverImage;
+            if (params.coverImage) updateData.coverImage = params.coverImage;
             if (params.status) updateData.status = params.status;
 
             const [updatedPost] = await tx
@@ -195,7 +165,7 @@ export class BlogService {
                 .where(eq(posts.slug, slug))
                 .returning();
 
-            // 5. Update Categories
+            // 4. Update Categories
             if (params.categoryIds && Array.isArray(params.categoryIds)) {
                 await tx.delete(postCategories).where(eq(postCategories.postId, existingPost.id));
 
@@ -219,7 +189,7 @@ export class BlogService {
             });
 
             if (!post) {
-                throw new Error("Blog post not found");
+                throw ServiceError.notFound("Blog post not found");
             }
 
             // Delete cascade within transaction
@@ -232,11 +202,44 @@ export class BlogService {
         });
     }
 
-    static async getAllPosts(filters: { status?: PostStatus; authorId?: string; categorySlug?: string; search?: string } = {}) {
+    static async getAllPosts(filters: { status?: PostStatus; authorId?: string; categorySlug?: string; search?: string; viewerId?: string } = {}) {
         const whereConditions: SQL[] = [];
 
-        if (filters.status) {
-            whereConditions.push(eq(posts.status, filters.status));
+        // SECURITY: Draft Visibility Logic
+        const statusFilter = filters.status;
+
+        // If explicitly requesting drafts, enforce ownership
+        if (statusFilter === "draft") {
+            // Must be viewer AND author, otherwise return empty
+            if (!filters.viewerId || (filters.authorId && filters.authorId !== filters.viewerId)) {
+                return [];
+            }
+            // If viewer is set but authorId not filtered, only show THEIR drafts
+            if (!filters.authorId) {
+                whereConditions.push(eq(posts.authorId, filters.viewerId));
+            } else if (filters.authorId !== filters.viewerId) {
+                // Should be covered by first check, but double safety
+                return [];
+            }
+        }
+
+        // If NO status specified (all posts): Show 'published' OR ('draft' AND isAuthor)
+        if (!statusFilter) {
+            const publishedCondition = eq(posts.status, "published");
+            if (filters.viewerId) {
+                // Show published + my drafts
+                whereConditions.push(or(
+                    publishedCondition,
+                    and(eq(posts.status, "draft"), eq(posts.authorId, filters.viewerId))
+                )!);
+            } else {
+                // Guest: only published
+                whereConditions.push(publishedCondition);
+            }
+        } else {
+            // Specific status requested (validated above logic for 'draft')
+            // For 'published', just add the condition
+            whereConditions.push(eq(posts.status, statusFilter));
         }
 
         if (filters.authorId) {
@@ -262,8 +265,10 @@ export class BlogService {
             }
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const queryOptions: any = {
+        const queryOptions = {
+            columns: {
+                content: false,
+            },
             with: {
                 author: {
                     columns: {
@@ -280,13 +285,12 @@ export class BlogService {
                 },
             },
             orderBy: [desc(posts.createdAt)],
+            ...(whereConditions.length > 0 && { where: and(...whereConditions) }),
         };
 
-        if (whereConditions.length > 0) {
-            queryOptions.where = and(...whereConditions);
-        }
-
-        return await db.query.posts.findMany(queryOptions);
+        // Drizzle's complex query config types don't properly support dynamic where clauses with spread
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return await db.query.posts.findMany(queryOptions as any);
     }
 
     static async likePost(userId: string, postId: string) {
