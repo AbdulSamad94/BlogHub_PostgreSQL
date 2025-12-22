@@ -43,7 +43,7 @@ export async function POST(req: Request) {
             } catch (error) {
                 console.error("Cloudinary upload failed:", error);
                 return NextResponse.json(
-                    { error: "Failed to upload cover image" },
+                    { error: "Failed to upload cover image", code: "UPLOAD_ERROR" },
                     { status: 400 }
                 );
             }

@@ -206,39 +206,24 @@ export class BlogService {
         const whereConditions: SQL[] = [];
 
         // SECURITY: Draft Visibility Logic
-        const statusFilter = filters.status;
+        const { status: statusFilter, viewerId } = filters;
 
-        // If explicitly requesting drafts, enforce ownership
-        if (statusFilter === "draft") {
-            // Must be viewer AND author, otherwise return empty
-            if (!filters.viewerId || (filters.authorId && filters.authorId !== filters.viewerId)) {
-                return [];
-            }
-            // If viewer is set but authorId not filtered, only show THEIR drafts
-            if (!filters.authorId) {
-                whereConditions.push(eq(posts.authorId, filters.viewerId));
-            } else if (filters.authorId !== filters.viewerId) {
-                // Should be covered by first check, but double safety
-                return [];
-            }
+        // Base visibility rule: Guests see only published posts.
+        // Logged-in users see all published posts plus their own drafts.
+        if (!viewerId) {
+            whereConditions.push(eq(posts.status, "published"));
+        } else {
+            whereConditions.push(or(
+                eq(posts.status, "published"),
+                and(eq(posts.status, "draft"), eq(posts.authorId, viewerId))
+            )!);
         }
 
-        // If NO status specified (all posts): Show 'published' OR ('draft' AND isAuthor)
-        if (!statusFilter) {
-            const publishedCondition = eq(posts.status, "published");
-            if (filters.viewerId) {
-                // Show published + my drafts
-                whereConditions.push(or(
-                    publishedCondition,
-                    and(eq(posts.status, "draft"), eq(posts.authorId, filters.viewerId))
-                )!);
-            } else {
-                // Guest: only published
-                whereConditions.push(publishedCondition);
-            }
-        } else {
-            // Specific status requested (validated above logic for 'draft')
-            // For 'published', just add the condition
+        // If a specific status is requested, it acts as an additional filter
+        // on top of the base visibility rules.
+        if (statusFilter) {
+            // This will correctly return no results if a guest requests drafts,
+            // or a user requests drafts of another user.
             whereConditions.push(eq(posts.status, statusFilter));
         }
 

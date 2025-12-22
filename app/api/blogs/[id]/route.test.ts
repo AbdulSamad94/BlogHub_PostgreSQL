@@ -120,11 +120,8 @@ describe("Blog Detail API Routes", () => {
     });
 
     test("returns 404 for draft post when not author", async () => {
-      mockGetPostBySlug.mockResolvedValue({
-        ...mockPost,
-        status: "draft",
-        authorId: "different-user",
-      });
+      // Service layer now returns null for unauthorized draft access
+      mockGetPostBySlug.mockResolvedValue(null);
 
       const response = await GET(
         {} as NextRequest,
