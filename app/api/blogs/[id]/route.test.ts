@@ -230,10 +230,10 @@ describe("Blog Detail API Routes", () => {
   describe("PUT /api/blogs/[id]", () => {
     const validUpdateData = {
       title: "Updated Title",
-      content: "<p>Updated content</p>",
+      content: "<p>Updated content must be long enough to pass validation rules of 20 chars</p>",
       excerpt: "Updated excerpt",
       status: "published",
-      categoryIds: ["cat1"],
+      categoryIds: ["123e4567-e89b-12d3-a456-426614174000"], // Valid UUID
     };
 
     beforeEach(() => {
@@ -287,7 +287,9 @@ describe("Blog Detail API Routes", () => {
 
       expect(response.status).toBe(400);
       const data = await response.json();
-      expect(data.error).toBe("Title is required");
+      // Zod validation error format
+      expect(data.error).toBe("Validation failed");
+      expect(data.details.fieldErrors.title).toBeDefined();
     });
 
     test("returns 400 when title is too short", async () => {
@@ -301,7 +303,8 @@ describe("Blog Detail API Routes", () => {
 
       expect(response.status).toBe(400);
       const data = await response.json();
-      expect(data.error).toBe("Title must be at least 5 characters");
+      expect(data.error).toBe("Validation failed");
+      expect(data.details.fieldErrors.title).toBeDefined();
     });
 
     test("returns 403 when trying to update another user's blog", async () => {
@@ -323,7 +326,7 @@ describe("Blog Detail API Routes", () => {
       expect(data.error).toBe("Forbidden: You can only edit your own blog posts");
     });
 
-    test("holds error message from service", async () => {
+    test("handles error message from service", async () => {
       mockUpdatePost.mockRejectedValue(new Error("Service error message here"));
 
       const request = {

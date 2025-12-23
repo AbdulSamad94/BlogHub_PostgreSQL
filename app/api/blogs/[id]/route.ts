@@ -1,8 +1,9 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth/authOptions";
 import { BlogService } from "@/lib/services/blogService";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { updatePostSchema } from "@/lib/validations/blog";
+import { ZodError } from "zod";
 
 export async function GET(
   req: Request,
@@ -109,20 +110,8 @@ export async function PUT(
 
     const body = await request.json();
 
-    // Validate required fields
-    if (!body.title?.trim()) {
-      return NextResponse.json(
-        { error: "Title is required" },
-        { status: 400 }
-      );
-    }
-
-    if (body.title.length < 5) {
-      return NextResponse.json(
-        { error: "Title must be at least 5 characters" },
-        { status: 400 }
-      );
-    }
+    // VALIDATION: Parse input specific to updates
+    const validatedData = updatePostSchema.parse(body);
 
     // Find the blog post by ID (not slug)
     const post = await BlogService.getPostBySlug(id);
@@ -143,13 +132,13 @@ export async function PUT(
     }
 
     // HANDLE IMAGE UPLOAD
-    if (body.coverImageBase64) {
+    if (validatedData.coverImageBase64) {
       try {
         const imageUrl = await uploadImageToCloudinary(
-          body.coverImageBase64,
-          body.coverImageType || "image/jpeg"
+          validatedData.coverImageBase64,
+          validatedData.coverImageType || "image/jpeg"
         );
-        body.coverImage = imageUrl;
+        validatedData.coverImage = imageUrl;
       } catch (error) {
         console.error("Cloudinary upload failed:", error);
         return NextResponse.json(
@@ -160,15 +149,8 @@ export async function PUT(
     }
 
     const updatedPost = await BlogService.updatePost(id, {
-      title: body.title,
-      content: body.content,
-      excerpt: body.excerpt,
-      status: body.status || "published",
+      ...validatedData,
       authorId: session.user.id,
-      categoryIds: body.categoryIds,
-      coverImage: body.coverImage,
-      // coverImageBase64: body.coverImageBase64, // Redundant now
-      // coverImageType: body.coverImageType
     });
 
     return NextResponse.json(
@@ -180,6 +162,13 @@ export async function PUT(
       { status: 200 }
     );
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        { error: "Validation failed", code: "VALIDATION_ERROR", details: error.flatten() },
+        { status: 400 }
+      );
+    }
+
     console.error("Error updating blog post:", error);
 
     return NextResponse.json(

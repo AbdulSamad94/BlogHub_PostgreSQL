@@ -14,7 +14,7 @@ export interface Blog {
   excerpt: string | null;
   coverImage: string | null;
   status: string;
-  createdAt: string;
+  createdAt: string | Date;
   author: Author;
   likeCount: number;
   hasLiked?: boolean;
@@ -151,7 +151,7 @@ export interface Category {
   name: string;
   slug: string;
   description: string | null;
-  createdAt: string;
+  createdAt: string | Date;
 }
 
 export type BlogPayload = {
@@ -200,6 +200,3 @@ export interface UserProfileState {
   loading: boolean;
   error: string | null;
 }
-
-// ==================== DATA SERVICE EXTENSIONS ====================
-// Add these functions to lib/data.ts

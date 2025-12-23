@@ -14,7 +14,7 @@ export function calculateReadTime(content: string) {
 }
 
 // Helper function to format date
-export function formatDate(dateString: string) {
+export function formatDate(dateString: string | Date) {
   const date = new Date(dateString);
   return date.toLocaleDateString("en-US", {
     month: "short",
