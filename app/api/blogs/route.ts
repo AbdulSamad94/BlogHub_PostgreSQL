@@ -6,6 +6,8 @@ import { BlogService } from "@/lib/services/blogService";
 import { ZodError } from "zod";
 import { users } from "@/lib/db/schema/schema";
 import { eq } from "drizzle-orm";
+import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { ServiceError } from "@/lib/errors";
 
 export async function POST(req: Request) {
     try {
@@ -25,11 +27,27 @@ export async function POST(req: Request) {
         const body = await req.json();
 
         // VALIDATION: Parse entire body against strict Zod schema
-        // This validates title, content, images, status, AND categoryIds type
         const validatedData = createPostSchema.parse({
             ...body,
-            authorId: user.id // Inject authorID for validation if schema requires it, or handle in service
+            authorId: user.id
         });
+
+        // HANDLE IMAGE UPLOAD (Decoupled from Transaction)
+        if (validatedData.coverImageBase64) {
+            try {
+                const imageUrl = await uploadImageToCloudinary(
+                    validatedData.coverImageBase64,
+                    validatedData.coverImageType || "image/jpeg"
+                );
+                validatedData.coverImage = imageUrl;
+            } catch (error) {
+                console.error("Cloudinary upload failed:", error);
+                return NextResponse.json(
+                    { error: "Failed to upload cover image", code: "UPLOAD_ERROR" },
+                    { status: 400 }
+                );
+            }
+        }
 
         const newPost = await BlogService.createPost(validatedData);
 
@@ -40,14 +58,21 @@ export async function POST(req: Request) {
     } catch (error) {
         if (error instanceof ZodError) {
             return NextResponse.json(
-                { error: "Validation failed", details: error.flatten() },
+                { error: "Validation failed", code: "VALIDATION_ERROR", details: error.flatten() },
                 { status: 400 }
+            );
+        }
+
+        if (error instanceof ServiceError) {
+            return NextResponse.json(
+                { error: error.message, code: error.code },
+                { status: error.statusCode }
             );
         }
 
         console.error("Create blog error:", error);
         return NextResponse.json(
-            { error: "Failed to create blog post" },
+            { error: "Failed to create blog post", code: "INTERNAL_ERROR" },
             { status: 500 }
         );
     }
@@ -67,11 +92,14 @@ export async function GET(req: Request) {
         const categorySlug = searchParams.get("category") || undefined;
         const search = searchParams.get("search") || undefined;
 
+        const session = await getAuthSession();
+
         const allPosts = await BlogService.getAllPosts({
             status,
             authorId,
             categorySlug,
-            search
+            search,
+            viewerId: session?.user?.id
         });
 
         return NextResponse.json({
@@ -79,9 +107,16 @@ export async function GET(req: Request) {
             posts: allPosts,
         });
     } catch (error) {
+        if (error instanceof ServiceError) {
+            return NextResponse.json(
+                { error: error.message, code: error.code },
+                { status: error.statusCode }
+            );
+        }
+
         console.error("Fetch blogs error:", error);
         return NextResponse.json(
-            { error: "Failed to fetch blog posts" },
+            { error: "Failed to fetch blog posts", code: "INTERNAL_ERROR" },
             { status: 500 }
         );
     }

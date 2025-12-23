@@ -1,7 +1,6 @@
-
 import { BlogService } from "./blogService";
 import { db } from "@/lib/db";
-import { uploadImageToCloudinary } from "@/lib/cloudinary";
+import { ServiceError } from "@/lib/errors";
 import { posts, postCategories } from "@/lib/db/schema/schema";
 
 jest.mock("@/lib/db", () => {
@@ -32,12 +31,6 @@ jest.mock("@/lib/db", () => {
     };
 });
 
-jest.mock("@/lib/cloudinary", () => ({
-    uploadImageToCloudinary: jest.fn(),
-}));
-
-
-
 describe("BlogService", () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -61,20 +54,7 @@ describe("BlogService", () => {
             });
             (db.insert as jest.Mock).mockImplementation(mockInsert);
 
-            // Mock DB findFirst for the slug check (return null = no collision) AND return value
-            (db.query.posts.findFirst as jest.Mock)
-                .mockResolvedValueOnce(null) // for generateUniqueSlug check
-                .mockResolvedValueOnce({ // for createPost return (now inside transaction, or retrieved after?)
-                    // In refactor, createPost returns 'newPost' from insert().returning() directly in most cases
-                    // But wait, the service does: const [newPost] = await tx.insert()... returning(); return newPost.
-                    // So we don't necessarily call findFirst again for the return value in the simplified refactor?
-                    // Let's check the service code...
-                    // "return newPost;" (from returning()).
-                    // BUT generateUniqueSlug calls findFirst.
-                    // So only ONE findFirst call expected if no collision.
-                });
-
-            // Just return null for slug check
+            // Mock DB findFirst for the slug check (return null = no collision)
             (db.query.posts.findFirst as jest.Mock).mockResolvedValue(null);
 
             const result = await BlogService.createPost(validParams);
@@ -82,17 +62,13 @@ describe("BlogService", () => {
             // Check slug generation
             expect(mockInsert).toHaveBeenCalledWith(posts);
             const insertCall = mockInsertValues.mock.calls[0][0];
-            // 0.5.toString(36) is "0.i" -> substring(2, 7) might depend on implementation but roughly "i..."
-            // Actually, let's just check it contains the base slug.
             expect(insertCall.slug).toBe("test-blog-post");
             expect(insertCall.title).toBe(validParams.title);
 
             expect(result).toEqual(expect.objectContaining({ id: "post-123" }));
         });
 
-        it("should handle image upload if base64 provided", async () => {
-            (uploadImageToCloudinary as jest.Mock).mockResolvedValue("https://cloudinary.com/image.jpg");
-
+        it("should use provided coverImage URL if passed", async () => {
             const mockReturning = jest.fn().mockResolvedValue([{ id: "post-123" }]);
             const mockValues = jest.fn().mockReturnValue({ returning: mockReturning });
             const mockInsert = jest.fn().mockReturnValue({ values: mockValues });
@@ -102,11 +78,8 @@ describe("BlogService", () => {
 
             await BlogService.createPost({
                 ...validParams,
-                coverImageBase64: "base64string",
-                coverImageType: "image/png",
+                coverImage: "https://cloudinary.com/image.jpg",
             });
-
-            expect(uploadImageToCloudinary).toHaveBeenCalledWith("base64string", "image/png");
 
             // Verify insert called with correct image URL
             const insertCall = mockValues.mock.calls[0][0];
@@ -145,8 +118,57 @@ describe("BlogService", () => {
         });
     });
 
+    describe("updatePost", () => {
+        it("should throw ServiceError.notFound when post does not exist", async () => {
+            // Mock transaction to execute callback
+            (db.transaction as jest.Mock).mockImplementation(async (callback) => {
+                // Mock findFirst inside transaction to return null
+                const mockTx = {
+                    query: {
+                        posts: {
+                            findFirst: jest.fn().mockResolvedValue(null),
+                        },
+                    },
+                };
+                return callback(mockTx);
+            });
+
+            try {
+                await BlogService.updatePost("non-existent-slug", { title: "Updated" });
+                fail("Should have thrown ServiceError");
+            } catch (error) {
+                expect(error).toBeInstanceOf(ServiceError);
+                expect((error as ServiceError).code).toBe("NOT_FOUND");
+            }
+        });
+    });
+
+    describe("deletePost", () => {
+        it("should throw ServiceError.notFound when post does not exist", async () => {
+            // Mock transaction to execute callback
+            (db.transaction as jest.Mock).mockImplementation(async (callback) => {
+                const mockTx = {
+                    query: {
+                        posts: {
+                            findFirst: jest.fn().mockResolvedValue(null),
+                        },
+                    },
+                };
+                return callback(mockTx);
+            });
+
+            try {
+                await BlogService.deletePost("non-existent-slug");
+                fail("Should have thrown ServiceError");
+            } catch (error) {
+                expect(error).toBeInstanceOf(ServiceError);
+                expect((error as ServiceError).code).toBe("NOT_FOUND");
+            }
+        });
+    });
+
     describe("getAllPosts", () => {
-        it("should fetch all posts with correct default ordering", async () => {
+        it("should fetch all posts with correct default ordering and exclude content", async () => {
             const mockFindMany = jest.fn().mockResolvedValue([{ id: "post-1" }]);
             (db.query.posts.findMany as jest.Mock).mockImplementation(mockFindMany);
 
@@ -154,18 +176,32 @@ describe("BlogService", () => {
 
             expect(result).toEqual([{ id: "post-1" }]);
             expect(mockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+                columns: expect.objectContaining({ content: false }),
                 orderBy: expect.any(Array),
             }));
         });
 
-        it("should apply status filter", async () => {
+
+        it("should fetch drafts when viewer is the author", async () => {
+            const mockFindMany = jest.fn().mockResolvedValue([{ id: "post-1", status: "draft" }]);
+            (db.query.posts.findMany as jest.Mock).mockImplementation(mockFindMany);
+
+            const result = await BlogService.getAllPosts({
+                status: "draft",
+                authorId: "user-123",
+                viewerId: "user-123"
+            });
+
+            expect(result).toEqual([{ id: "post-1", status: "draft" }]);
+            expect(mockFindMany).toHaveBeenCalled();
+        });
+
+        it("should apply status filter for published posts", async () => {
             const mockFindMany = jest.fn().mockResolvedValue([]);
             (db.query.posts.findMany as jest.Mock).mockImplementation(mockFindMany);
 
             await BlogService.getAllPosts({ status: "published" });
 
-            // We can't easily inspect the exact SQL construction with simplified mocking
-            // but we can ensure findMany was called.
             expect(mockFindMany).toHaveBeenCalled();
         });
     });

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth/authOptions";
 import { BlogService } from "@/lib/services/blogService";
+import { uploadImageToCloudinary } from "@/lib/cloudinary";
 
 export async function GET(
   req: Request,
@@ -27,16 +28,7 @@ export async function GET(
       );
     }
 
-    // Only return published posts or drafts if requested by author
-    if (post.status === "draft") {
-      const session = await getAuthSession();
-      if (!session || post.authorId !== session.user.id) {
-        return NextResponse.json(
-          { error: "Blog post not found" },
-          { status: 404 }
-        );
-      }
-    }
+
 
     return NextResponse.json({
       success: true,
@@ -150,6 +142,23 @@ export async function PUT(
       );
     }
 
+    // HANDLE IMAGE UPLOAD
+    if (body.coverImageBase64) {
+      try {
+        const imageUrl = await uploadImageToCloudinary(
+          body.coverImageBase64,
+          body.coverImageType || "image/jpeg"
+        );
+        body.coverImage = imageUrl;
+      } catch (error) {
+        console.error("Cloudinary upload failed:", error);
+        return NextResponse.json(
+          { error: "Failed to upload cover image", code: "UPLOAD_ERROR" },
+          { status: 400 }
+        );
+      }
+    }
+
     const updatedPost = await BlogService.updatePost(id, {
       title: body.title,
       content: body.content,
@@ -158,8 +167,8 @@ export async function PUT(
       authorId: session.user.id,
       categoryIds: body.categoryIds,
       coverImage: body.coverImage,
-      coverImageBase64: body.coverImageBase64,
-      coverImageType: body.coverImageType
+      // coverImageBase64: body.coverImageBase64, // Redundant now
+      // coverImageType: body.coverImageType
     });
 
     return NextResponse.json(
