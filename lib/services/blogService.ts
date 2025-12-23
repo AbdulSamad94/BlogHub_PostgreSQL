@@ -57,12 +57,18 @@ export class BlogService {
             .returning();
 
         // 3. Link Categories
-        if (params.categoryIds && params.categoryIds.length > 0) {
-            const categoryValues = params.categoryIds.map((categoryId) => ({
-                postId: newPost.id,
-                categoryId,
-            }));
-            await db.insert(postCategories).values(categoryValues);
+        try {
+            if (params.categoryIds && params.categoryIds.length > 0) {
+                const categoryValues = params.categoryIds.map((categoryId) => ({
+                    postId: newPost.id,
+                    categoryId,
+                }));
+                await db.insert(postCategories).values(categoryValues);
+            }
+        } catch (error) {
+            // Manual Rollback: Delete the created post if category linking fails
+            await db.delete(posts).where(eq(posts.id, newPost.id));
+            throw error;
         }
 
         return newPost;
