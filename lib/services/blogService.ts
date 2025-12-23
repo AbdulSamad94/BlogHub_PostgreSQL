@@ -38,36 +38,34 @@ export class BlogService {
     }
 
     static async createPost(params: CreatePostInput) {
-        return await db.transaction(async (tx) => {
-            // 1. Generate Slug
-            const slug = await this.generateUniqueSlug(params.title);
+        // 1. Generate Slug
+        const slug = await this.generateUniqueSlug(params.title);
 
-            // 2. Insert Post
-            const [newPost] = await tx
-                .insert(posts)
-                .values({
-                    title: params.title,
-                    slug,
-                    content: params.content,
-                    excerpt: params.excerpt || null,
-                    // Assume coverImage is already an uploaded URL if present
-                    coverImage: params.coverImage || null,
-                    status: params.status as PostStatus,
-                    authorId: params.authorId,
-                })
-                .returning();
+        // 2. Insert Post
+        const [newPost] = await db
+            .insert(posts)
+            .values({
+                title: params.title,
+                slug,
+                content: params.content,
+                excerpt: params.excerpt || null,
+                // Assume coverImage is already an uploaded URL if present
+                coverImage: params.coverImage || null,
+                status: params.status as PostStatus,
+                authorId: params.authorId,
+            })
+            .returning();
 
-            // 3. Link Categories
-            if (params.categoryIds && params.categoryIds.length > 0) {
-                const categoryValues = params.categoryIds.map((categoryId) => ({
-                    postId: newPost.id,
-                    categoryId,
-                }));
-                await tx.insert(postCategories).values(categoryValues);
-            }
+        // 3. Link Categories
+        if (params.categoryIds && params.categoryIds.length > 0) {
+            const categoryValues = params.categoryIds.map((categoryId) => ({
+                postId: newPost.id,
+                categoryId,
+            }));
+            await db.insert(postCategories).values(categoryValues);
+        }
 
-            return newPost;
-        });
+        return newPost;
     }
 
     static async getPostBySlug(slug: string, userId?: string) {
@@ -131,75 +129,71 @@ export class BlogService {
     }
 
     static async updatePost(slug: string, params: UpdatePostInput) {
-        return await db.transaction(async (tx) => {
-            // 1. Find existing post
-            const existingPost = await tx.query.posts.findFirst({
-                where: eq(posts.slug, slug),
-            });
-
-            if (!existingPost) {
-                throw ServiceError.notFound("Blog post not found");
-            }
-
-            // 2. Handle Slug change
-            const newSlug = params.title && params.title !== existingPost.title
-                ? await this.generateUniqueSlug(params.title)
-                : existingPost.slug;
-
-            // 3. Update Post
-            const updateData: Record<string, unknown> = {
-                updatedAt: new Date(),
-            };
-            if (params.title) {
-                updateData.title = params.title;
-                updateData.slug = newSlug;
-            }
-            if (params.content) updateData.content = params.content;
-            if (params.excerpt !== undefined) updateData.excerpt = params.excerpt;
-            if (params.coverImage) updateData.coverImage = params.coverImage;
-            if (params.status) updateData.status = params.status;
-
-            const [updatedPost] = await tx
-                .update(posts)
-                .set(updateData)
-                .where(eq(posts.slug, slug))
-                .returning();
-
-            // 4. Update Categories
-            if (params.categoryIds && Array.isArray(params.categoryIds)) {
-                await tx.delete(postCategories).where(eq(postCategories.postId, existingPost.id));
-
-                if (params.categoryIds.length > 0) {
-                    const categoryValues = params.categoryIds.map((categoryId) => ({
-                        postId: existingPost.id,
-                        categoryId,
-                    }));
-                    await tx.insert(postCategories).values(categoryValues);
-                }
-            }
-
-            return updatedPost;
+        // 1. Find existing post
+        const existingPost = await db.query.posts.findFirst({
+            where: eq(posts.slug, slug),
         });
+
+        if (!existingPost) {
+            throw ServiceError.notFound("Blog post not found");
+        }
+
+        // 2. Handle Slug change
+        const newSlug = params.title && params.title !== existingPost.title
+            ? await this.generateUniqueSlug(params.title)
+            : existingPost.slug;
+
+        // 3. Update Post
+        const updateData: Record<string, unknown> = {
+            updatedAt: new Date(),
+        };
+        if (params.title) {
+            updateData.title = params.title;
+            updateData.slug = newSlug;
+        }
+        if (params.content) updateData.content = params.content;
+        if (params.excerpt !== undefined) updateData.excerpt = params.excerpt;
+        if (params.coverImage) updateData.coverImage = params.coverImage;
+        if (params.status) updateData.status = params.status;
+
+        const [updatedPost] = await db
+            .update(posts)
+            .set(updateData)
+            .where(eq(posts.slug, slug))
+            .returning();
+
+        // 4. Update Categories
+        if (params.categoryIds && Array.isArray(params.categoryIds)) {
+            await db.delete(postCategories).where(eq(postCategories.postId, existingPost.id));
+
+            if (params.categoryIds.length > 0) {
+                const categoryValues = params.categoryIds.map((categoryId) => ({
+                    postId: existingPost.id,
+                    categoryId,
+                }));
+                await db.insert(postCategories).values(categoryValues);
+            }
+        }
+
+        return updatedPost;
     }
 
     static async deletePost(slug: string) {
-        return await db.transaction(async (tx) => {
-            const post = await tx.query.posts.findFirst({
-                where: eq(posts.slug, slug),
-            });
-
-            if (!post) {
-                throw ServiceError.notFound("Blog post not found");
-            }
-
-            // Delete cascade within transaction
-            await tx.delete(postCategories).where(eq(postCategories.postId, post.id));
-            await tx.delete(comments).where(eq(comments.postId, post.id));
-            await tx.delete(postLikes).where(eq(postLikes.postId, post.id));
-            await tx.delete(posts).where(eq(posts.id, post.id));
-
-            return true;
+        const post = await db.query.posts.findFirst({
+            where: eq(posts.slug, slug),
         });
+
+        if (!post) {
+            throw ServiceError.notFound("Blog post not found");
+        }
+
+        // Delete cascade manually
+        await db.delete(postCategories).where(eq(postCategories.postId, post.id));
+        await db.delete(comments).where(eq(comments.postId, post.id));
+        await db.delete(postLikes).where(eq(postLikes.postId, post.id));
+        await db.delete(posts).where(eq(posts.id, post.id));
+
+        return true;
     }
 
     static async getAllPosts(filters: { status?: PostStatus; authorId?: string; categorySlug?: string; search?: string; viewerId?: string } = {}) {
@@ -250,10 +244,7 @@ export class BlogService {
             }
         }
 
-        const queryOptions = {
-            columns: {
-                content: false,
-            },
+        return await db.query.posts.findMany({
             with: {
                 author: {
                     columns: {
@@ -270,12 +261,8 @@ export class BlogService {
                 },
             },
             orderBy: [desc(posts.createdAt)],
-            ...(whereConditions.length > 0 && { where: and(...whereConditions) }),
-        };
-
-        // Drizzle's complex query config types don't properly support dynamic where clauses with spread
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return await db.query.posts.findMany(queryOptions as any);
+            where: whereConditions.length > 0 ? and(...whereConditions) : undefined,
+        });
     }
 
     static async likePost(userId: string, postId: string) {

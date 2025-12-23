@@ -1,172 +1,75 @@
-"use client";
-
+import { Suspense } from "react";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { FeaturedBlog } from "@/components/blog/featured-blog";
-import { BlogCard } from "@/components/blog/blog-card";
-import { ErrorState } from "@/components/shared/error-state";
-import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { HeroSection } from "@/components/home/hero-section";
+import { BlogGrid } from "@/components/home/blog-grid";
 import { calculateReadTime, formatDate } from "@/lib/utils";
-import { Blog } from "@/lib/types";
-import { blogApi } from "@/lib/data";
-import { FeaturedBlogSkeleton } from "@/components/blog/featured-blog-skeleton";
-import { BlogCardSkeleton } from "@/components/blog/blog-card-skeleton";
+import { BlogService } from "@/lib/services/blogService";
+import { HomeSkeleton } from "@/components/home/home-skeleton";
 
 export default function Home() {
-  const [blogs, setBlogs] = useState<Blog[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function fetchBlogs() {
-      try {
-        setLoading(true);
-        const data = await blogApi.getAllBlogs();
-        const publishedBlogs = data.posts.filter(
-          (post: Blog) => post.status === "published"
-        );
-        setBlogs(publishedBlogs);
-      } catch (err) {
-        console.error("Error fetching blogs:", err);
-        setError(err instanceof Error ? err.message : "Failed to load blogs");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchBlogs();
-  }, []);
-
-  if (error) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        <ErrorState
-          message="Failed to load blogs"
-          error={error}
-          showBackButton={true}
-          className="min-h-[60vh]"
-        />
-        <Footer />
-      </div>
-    );
-  }
-
-  const featuredBlog = blogs[0] || null;
-  const otherBlogs = blogs.slice(1);
-
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Hero Section */}
-        <motion.section
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-16"
-        >
-          <div className="space-y-4 mb-12">
-            <h1 className="text-4xl md:text-5xl font-bold leading-tight text-balance">
-              Discover Stories Worth Reading
-            </h1>
-            <p className="text-xl text-muted-foreground max-w-2xl text-balance">
-              Explore insightful articles on web development, design, and
-              technology from our community of writers.
-            </p>
-          </div>
-        </motion.section>
+        <HeroSection />
 
-        {/* Loading Skeletons */}
-        {loading ? (
-          <>
-            <section className="mb-20">
-              <FeaturedBlogSkeleton />
-            </section>
-            <section>
-              <h2 className="text-2xl font-bold mb-8">Latest Articles</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {[...Array(3)].map((_, index) => (
-                  <BlogCardSkeleton key={index} />
-                ))}
-              </div>
-            </section>
-          </>
-        ) : (
-          <>
-            {featuredBlog && (
-              <section className="mb-20">
-                <FeaturedBlog
-                  id={featuredBlog.slug}
-                  title={featuredBlog.title}
-                  excerpt={
-                    featuredBlog.excerpt ||
-                    featuredBlog.content
-                      .replace(/<[^>]*>/g, "")
-                      .substring(0, 200) + "..."
-                  }
-                  author={featuredBlog.author.name || "Anonymous"}
-                  authorId={featuredBlog.author.id}
-                  date={formatDate(featuredBlog.createdAt)}
-                  tags={
-                    featuredBlog.postCategories?.map(
-                      (pc) => pc.category.name
-                    ) || []
-                  }
-                  coverImage={
-                    featuredBlog.coverImage ||
-                    "/placeholder.svg?height=400&width=800"
-                  }
-                  readTime={calculateReadTime(featuredBlog.content)}
-                />
-              </section>
-            )}
-
-            {otherBlogs.length > 0 && (
-              <section>
-                <h2 className="text-2xl font-bold mb-8">Latest Articles</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                  {otherBlogs.map((blog, index) => (
-                    <motion.div
-                      key={blog.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.5, delay: index * 0.1 }}
-                    >
-                      <BlogCard
-                        id={blog.slug}
-                        title={blog.title}
-                        excerpt={
-                          blog.excerpt ||
-                          blog.content
-                            .replace(/<[^>]*>/g, "")
-                            .substring(0, 150) + "..."
-                        }
-                        author={blog.author.name || "Anonymous"}
-                        authorId={blog.author.id}
-                        date={formatDate(blog.createdAt)}
-                        tags={
-                          blog.postCategories?.map((pc) => pc.category.name) ||
-                          []
-                        }
-                        coverImage={
-                          blog.coverImage ||
-                          "/placeholder.svg?height=400&width=600"
-                        }
-                        readTime={calculateReadTime(blog.content)}
-                      />
-                    </motion.div>
-                  ))}
-                </div>
-              </section>
-            )}
-          </>
-        )}
+        <Suspense fallback={<HomeSkeleton />}>
+          <HomeFeed />
+        </Suspense>
       </main>
 
       <Footer />
     </div>
+  );
+}
+
+async function HomeFeed() {
+  const posts = await BlogService.getAllPosts({ status: "published" });
+
+  // Filter out any potential nulls if types are loose, though Service returns solid array
+  const validPosts = posts || [];
+
+  const featuredBlog = validPosts[0] || null;
+  const otherBlogs = validPosts.slice(1);
+
+  return (
+    <>
+      {/* Featured Blog */}
+      {featuredBlog && (
+        <section className="mb-20">
+          <FeaturedBlog
+            id={featuredBlog.slug}
+            title={featuredBlog.title}
+            excerpt={
+              featuredBlog.excerpt ||
+              featuredBlog.content.replace(/<[^>]*>/g, "").substring(0, 200) +
+                "..."
+            }
+            author={featuredBlog.author.name || "Anonymous"}
+            authorId={featuredBlog.author.id}
+            date={formatDate(featuredBlog.createdAt)}
+            tags={
+              featuredBlog.postCategories?.map((pc) => pc.category.name) || []
+            }
+            coverImage={
+              featuredBlog.coverImage || "/placeholder.svg?height=400&width=800"
+            }
+            readTime={calculateReadTime(featuredBlog.content)}
+          />
+        </section>
+      )}
+
+      {/* Latest Articles */}
+      {otherBlogs.length > 0 && (
+        <section>
+          <h2 className="text-2xl font-bold mb-8">Latest Articles</h2>
+          <BlogGrid blogs={otherBlogs} />
+        </section>
+      )}
+    </>
   );
 }
